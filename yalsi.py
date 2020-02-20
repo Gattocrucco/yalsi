@@ -53,11 +53,14 @@ class fit:
         if not (sdev is None):
             sdev = np.asarray_chkfinite(sdev, dtype=float)
             assert sdev.shape in {data.shape, (1,), ()}
+            sdev = sdev.reshape(-1)
             assert np.all(sdev > 0)
+            variance = sdev ** 2
     
         if not (variance is None):
             variance = np.asarray_chkfinite(variance, dtype=float)
             assert variance.shape in {data.shape, (1,), ()}
+            variance = variance.reshape(-1)
             assert np.all(variance > 0)
             sdev = np.sqrt(variance)
     
@@ -111,13 +114,13 @@ class fit:
         hessian = result.jac.T @ result.jac
         cov = linalg.solve(hessian, np.eye(len(p0)), assume_a='pos')
     
-        hess = autograd.jacobian(jac, 0)
+        hess = autograd.hessian(fun, 0)
         jacdata = autograd.jacobian(fun, 1)
     
         # r: residuals, p: parameters, y: data
         drdp = result.jac
         drdy = jacdata(result.x, data, *args, **kwargs)
-        drdpdp = hess(result.x, data, *args, **kwargs)
+        drdpdp = hess(result.x, data, *args, **kwargs) # SLOOOOOOOOOOOOW
     
         # g: gradient of the cost function 1/2 * r.T @ r
         dgdp = np.einsum('ia,ib->ab', drdp, drdp)
@@ -140,10 +143,22 @@ class fit:
         dpdydy = linalg.solve(A, C, assume_a='pos')
         dpdydy = dpdydy.reshape(len(p0), len(data), len(data))
     
-        bias = 1/2 * np.einsum('akq,kq->a', dpdydy, covariance)
+        if not (variance is None):
+            bias = 1/2 * np.einsum('akk,k->a', dpdydy, variance)
+        else:
+            bias = 1/2 * np.einsum('akq,kq->a', dpdydy, covariance)
         
         ###### Save variables in instance ######
         
         self.p = par
         self.pcov = cov
         self.pbias = bias
+        self.pgrad = dpdy
+        self.phessian = dpdydy
+
+def least_squares_cov(result):
+    _, s, VT = linalg.svd(result.jac, full_matrices=False)
+    threshold = np.finfo(float).eps * max(result.jac.shape) * s[0]
+    s = s[s > threshold]
+    VT = VT[:s.size]
+    return np.dot(VT.T / s**2, VT)
