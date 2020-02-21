@@ -29,7 +29,7 @@ def lsqderiv(drdp, drdy, drdpdp):
         Hessian of least squares estimate of parameters w.r.t. data.
     """
     # TODO:
-    # diagonal hessian with drdpdp.shape = (n, k)
+    # diagonal hessian with drdpdp.shape == (n, k)
     # compute gradient only with drdpdp=None by default
     # broadcasting
     # vectorization
@@ -37,6 +37,7 @@ def lsqderiv(drdp, drdy, drdpdp):
     # remove sign changes and zero term
     # decompose A only once
     # avoid duplicate off-diagonal in computing dpdydy
+    # do I need an SVD cut on drdp?
     
     # Check input
     drdp = np.asarray_chkfinite(drdp)
@@ -66,9 +67,68 @@ def lsqderiv(drdp, drdy, drdpdp):
     C = -dgdydy
     C -= 2 * np.einsum('abk,bq->akq', dgdpdy, dpdy)
     C -= np.einsum('abg,bk,gq->akq', dgdpdp, dpdy, dpdy)
-    C = C.reshape(len(p0), len(data) ** 2)
+    C = C.reshape(k, n * n)
     dpdydy = linalg.solve(A, C, assume_a='pos')
-    dpdydy = dpdydy.reshape(len(p0), len(data), len(data))
+    dpdydy = dpdydy.reshape(k, n, n)
     
     return A, dpdy, dpdydy
+
+if __name__ == '__main__':
+    import unittest
+    from autograd import numpy as np
+    import autograd
+    from scipy import optimize, linalg
     
+    class TestLSQDeriv(unittest.TestCase):
+        
+        def fit(self, f, true_p, compute_derivs=True):
+            def r(p, y):
+                return y - f(p)
+            jac = autograd.jacobian(r, 0)
+            true_y = f(true_p)
+            y = true_y + np.random.randn(*true_y.shape)
+            result = optimize.least_squares(r, true_p, jac=jac, args=(y,))
+            assert result.success
+            
+            if not compute_derivs:
+                return result.x
+            
+            drdp = result.jac
+            jacdata = autograd.jacobian(r, 1)
+            hess = autograd.hessian(r, 0)
+            drdy = jacdata(result.x, y)
+            assert np.all(drdy == np.eye(len(y)))
+            drdpdp = hess(result.x, y)
+            return result.x, drdp, drdy, drdpdp
+        
+        def test_linear(self):
+            p = np.random.randn(10)
+            H = np.random.randn(100, len(p))
+            f = lambda p: H @ p
+           
+            p, drdp, drdy, drdpdp = self.fit(f, p)
+            assert np.all(drdpdp == 0)
+            assert np.all(drdp == H) or np.all(drdp == -H)
+            
+            A, dpdy, dpdydy = lsqderiv(drdp, drdy, drdpdp)
+            
+            # # Check dtypes
+            # self.assertEqual(A.dtype, dtype)
+            # self.assertEqual(dpdy.dtype, dtype)
+            # self.assertEqual(dpdydy.dtype, dtype)
+            
+            # Check shapes
+            self.assertEqual(A.shape, (len(p), len(p)))
+            self.assertEqual(dpdy.shape, (len(p), H.shape[0]))
+            self.assertEqual(dpdydy.shape, (len(p), H.shape[0], H.shape[0]))
+            
+            # Check symmetries
+            self.assertTrue(np.allclose(A, A.T))
+            self.assertTrue(np.allclose(dpdydy, np.swapaxes(dpdydy, 1, 2)))
+            
+            # Check values
+            self.assertTrue(np.allclose(A, drdp.T @ drdp))
+            self.assertTrue(np.allclose(dpdy, linalg.solve(A, H.T)))
+            self.assertTrue(np.all(dpdydy == 0))
+    
+    unittest.main()
