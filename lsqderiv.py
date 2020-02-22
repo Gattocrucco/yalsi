@@ -65,8 +65,10 @@ def lsqderiv(drdp, drdy, drdpdp):
     dpdy = linalg.solve(A, B, assume_a='pos')
 
     C = -dgdydy
-    C -= 2 * np.einsum('abk,bq->akq', dgdpdy, dpdy)
+    dg2 = np.einsum('abk,bq->akq', dgdpdy, dpdy)
+    C -= dg2 + np.einsum('aqk', dg2)
     C -= np.einsum('abg,bk,gq->akq', dgdpdp, dpdy, dpdy)
+    assert np.allclose(C, np.swapaxes(C, 1, 2))
     C = C.reshape(k, n * n)
     dpdydy = linalg.solve(A, C, assume_a='pos')
     dpdydy = dpdydy.reshape(k, n, n)
@@ -78,30 +80,65 @@ if __name__ == '__main__':
     from autograd import numpy as np
     import autograd
     from scipy import optimize, linalg
+    import numdiff
     
     class TestLSQDeriv(unittest.TestCase):
         
-        def fit(self, f, true_p, compute_derivs=True):
+        def fit(self, f, true_p, y=None):
             def r(p, y):
                 return y - f(p)
             jac = autograd.jacobian(r, 0)
-            true_y = f(true_p)
-            y = true_y + np.random.randn(*true_y.shape)
-            result = optimize.least_squares(r, true_p, jac=jac, args=(y,))
+            if y is None:
+                true_y = f(true_p)
+                y = true_y + np.random.randn(*true_y.shape)
+            result = optimize.least_squares(r, true_p, jac=jac, args=(y,), ftol=1e-12, gtol=1e-12, xtol=1e-10)
             assert result.success
             
-            if not compute_derivs:
-                return result.x
-            
-            drdp = result.jac
+            drdp = jac(result.x, y)
+            assert np.allclose(drdp, result.jac)
             jacdata = autograd.jacobian(r, 1)
             hess = autograd.hessian(r, 0)
             drdy = jacdata(result.x, y)
-            assert np.all(drdy == np.eye(len(y)))
             drdpdp = hess(result.x, y)
+            
+            assert np.allclose(drdy, np.eye(len(y)))
+            assert np.allclose(drdpdp, np.swapaxes(drdpdp, 1, 2))
             return result.x, drdp, drdy, drdpdp
         
-        def test_linear(self):
+        def fit_dd(self, f, p0, y, step=None):
+            def r(p, y):
+                return y - f(p)
+            jac = autograd.jacobian(r, 0)
+            result = optimize.least_squares(r, p0, jac=jac, args=(y,), ftol=1e-12, gtol=1e-12, xtol=1e-10)
+            assert result.success
+
+            def fun(y):
+                re = optimize.least_squares(
+                    r, result.x, jac=jac, args=(y,), method='lm',
+                    ftol=1e-12, xtol=1e-12, gtol=1e-12
+                )
+                assert re.success
+                return re.x
+            dpdy, dpdydy = numdiff.numdiff(fun, y, step=step)
+                            
+            return result.x, dpdy, dpdydy
+                
+        def common_checks(self, A, dpdy, dpdydy, n, k, dtype=np.float64):
+            # Check dtypes
+            self.assertEqual(A.dtype, dtype)
+            self.assertEqual(dpdy.dtype, dtype)
+            self.assertEqual(dpdydy.dtype, dtype)
+            
+            # Check shapes
+            self.assertEqual(A.shape, (k, k))
+            self.assertEqual(dpdy.shape, (k, n))
+            self.assertEqual(dpdydy.shape, (k, n, n))
+            
+            # Check symmetries
+            self.assertTrue(np.allclose(A, A.T))
+            self.assertTrue(np.allclose(dpdydy, np.swapaxes(dpdydy, 1, 2)))
+        
+        def test_linear(self, dtype=np.float64):
             p = np.random.randn(10)
             H = np.random.randn(100, len(p))
             f = lambda p: H @ p
@@ -110,25 +147,35 @@ if __name__ == '__main__':
             assert np.all(drdpdp == 0)
             assert np.all(drdp == H) or np.all(drdp == -H)
             
+            drdp = np.array(drdp, dtype=dtype)
+            drdy = np.array(drdy, dtype=dtype)
+            drdpdp = np.array(drdpdp, dtype=dtype)
+            
             A, dpdy, dpdydy = lsqderiv(drdp, drdy, drdpdp)
-            
-            # # Check dtypes
-            # self.assertEqual(A.dtype, dtype)
-            # self.assertEqual(dpdy.dtype, dtype)
-            # self.assertEqual(dpdydy.dtype, dtype)
-            
-            # Check shapes
-            self.assertEqual(A.shape, (len(p), len(p)))
-            self.assertEqual(dpdy.shape, (len(p), H.shape[0]))
-            self.assertEqual(dpdydy.shape, (len(p), H.shape[0], H.shape[0]))
-            
-            # Check symmetries
-            self.assertTrue(np.allclose(A, A.T))
-            self.assertTrue(np.allclose(dpdydy, np.swapaxes(dpdydy, 1, 2)))
+            self.common_checks(A, dpdy, dpdydy, *H.shape, dtype)
             
             # Check values
             self.assertTrue(np.allclose(A, drdp.T @ drdp))
             self.assertTrue(np.allclose(dpdy, linalg.solve(A, H.T)))
             self.assertTrue(np.all(dpdydy == 0))
+        
+        def test_dtype(self):
+            self.test_linear(np.float32)
+        
+        def test_generic(self):
+            p = np.random.randn(3)
+            H = np.random.randn(5, len(p))
+            f = lambda p: H @ p + (H @ p) ** 3
+            
+            y = f(p) + np.random.randn(H.shape[0])
+            p, drdp, drdy, drdpdp = self.fit(f, p, y)
+            A, dpdy, dpdydy = lsqderiv(drdp, drdy, drdpdp)
+            self.common_checks(A, dpdy, dpdydy, *H.shape)
+            
+            p2, dpdy_num, dpdydy_num = self.fit_dd(f, p, y)
+            assert np.allclose(p, p2)
+            
+            self.assertTrue(np.allclose(dpdy, dpdy_num))
+            self.assertTrue(np.allclose(dpdydy, dpdydy_num, atol=1e-6))
     
     unittest.main()
