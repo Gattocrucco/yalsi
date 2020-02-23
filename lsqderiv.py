@@ -1,6 +1,6 @@
 import numpy as np
 
-def lsqderiv(drdp, drdy, drdpdp=None, drdpdpdp=None, residuals=0, compute_hessian=False):
+def lsqderiv(drdp, drdy, drdpdp=None, drdpdpdp=None, residuals=None, compute_hessian=False):
     """
     Compute the derivatives of a least squares estimate w.r.t. data. The least
     squares estimate is defined as
@@ -22,19 +22,19 @@ def lsqderiv(drdp, drdy, drdpdp=None, drdpdpdp=None, residuals=0, compute_hessia
     drdpdpdp : array (n, k, k, k) or None
         Tensor of third derivatives of residuals w.r.t parameters. Needed only
         if `compute_hessian` is True and `residuals` is nonzero.
-    residuals : scalar or array (n,) (default 0)
-        If 0, the derivatives are not computed exactly, but instead with
+    residuals : array (n,) or None
+        If None, the derivatives are not computed exactly, but instead with
         residuals set to 0. If you got p(y) minimizing ||y - f(p)||^2, this
         means computing the derivatives at f(p) instead of y. This gives an
-        estimate of the "true" derivatives. If nonzero, the exact derivatives at
-        the given residuals are computed.
+        estimate of the "true" derivatives. If specified, the exact derivatives
+        at the given residuals are computed.
     compute_hessian : bool (default False)
         If False, compute and return only the jacobian.
     
     Returns
     -------
     A : array (k, k)
-        drdp.T @ drdp
+        Hessian of the cost function 1/2 * sum(residuals ** 2).
     dpdy : array (k, n)
         Jacobian of least squares estimate of parameters w.r.t. data.
     dpdydy : array (k, n, n)
@@ -50,6 +50,7 @@ def lsqderiv(drdp, drdy, drdpdp=None, drdpdpdp=None, residuals=0, compute_hessia
     # decompose A only once
     # avoid duplicate off-diagonal in computing dpdydy
     # do I need an SVD cut on drdp?
+    # allow asymmetric inputs by implicitly taking the symmetric part
     
     # Check input
     drdp = np.asarray_chkfinite(drdp)
@@ -59,8 +60,12 @@ def lsqderiv(drdp, drdy, drdpdp=None, drdpdpdp=None, residuals=0, compute_hessia
     drdy = np.asarray_chkfinite(drdy)
     assert drdy.shape == (n, n)
     
+    zero_residuals = residuals is None
+    if not zero_residuals:
+        residuals = np.asarray_chkfinite(residuals)
+        assert residuals.shape == (n,)
+    
     compute_hessian = bool(compute_hessian)
-    zero_residuals = np.isscalar(residuals) and residuals == 0
     
     if drdpdp is None:
         assert zero_residuals and not compute_hessian
@@ -115,7 +120,7 @@ if __name__ == '__main__':
     from scipy import optimize, linalg
     import numdifftools
     
-    class TestLSQDeriv(unittest.TestCase):
+    class TestDerivatives(unittest.TestCase):
         
         def fit(self, f, true_p, y=None):
             def r(p, y):
@@ -246,5 +251,99 @@ if __name__ == '__main__':
                 print(dpdydy_num)
             self.assertTrue(jclose)
             self.assertTrue(hclose)
+    
+    class TestInput(unittest.TestCase):
+        
+        def setUp(self):
+            p = np.random.randn(3)
+            # len(p) >= 3 so we do not trigger broadcasting by popping
+            H = np.random.randn(4, len(p))
+            f = lambda p: np.cos(H @ p)
+            y = f(p) + np.random.randn(H.shape[0])
+            
+            def r(p, y):
+                return y - f(p)
+            jac = autograd.jacobian(r, 0)
+            jacdata = autograd.jacobian(r, 1)
+            hess = autograd.hessian(r, 0)
+            deriv3 = autograd.jacobian(hess, 0)
+            
+            result = optimize.least_squares(r, p, jac, args=(y,))
+            
+            self.r = result.fun
+            self.drdp = result.jac
+            self.drdy = jacdata(result.x, y)
+            self.drdpdp = hess(result.x, y)
+            self.drdpdpdp = deriv3(result.x, y)
+        
+        def test_optional_derivatives(self):
+            with self.assertRaises(AssertionError):
+                lsqderiv(self.drdp, self.drdy, residuals=self.r)
+            with self.assertRaises(AssertionError):
+                lsqderiv(self.drdp, self.drdy, compute_hessian=True)
+            with self.assertRaises(AssertionError):
+                lsqderiv(self.drdp, self.drdy, self.drdpdp, residuals=self.r, compute_hessian=True)
+        
+        def test_shapes(self):
+            with self.assertRaises(AssertionError):
+                drdp = self.drdp[:, :-1]
+                lsqderiv(drdp, self.drdy, self.drdpdp, self.drdpdpdp, self.r)
+            with self.assertRaises(AssertionError):
+                drdy = self.drdy[:, :-1]
+                lsqderiv(self.drdp, drdy, self.drdpdp, self.drdpdpdp, self.r)
+            with self.assertRaises(AssertionError):
+                drdpdp = self.drdpdp[:, :-1, :]
+                lsqderiv(self.drdp, self.drdy, drdpdp, self.drdpdpdp, self.r)
+            with self.assertRaises(AssertionError):
+                drdpdpdp = self.drdpdpdp[:, :-1, :, :]
+                lsqderiv(self.drdp, self.drdy, self.drdpdp, drdpdpdp, self.r)
+            with self.assertRaises(AssertionError):
+                r = self.r[:-1]
+                lsqderiv(self.drdp, self.drdy, self.drdpdp, self.drdpdpdp, r)
+        
+        def test_asymmetry(self):
+            with self.assertRaises(AssertionError):
+                drdpdp = np.array(self.drdpdp)
+                drdpdp[:, 0, 1] += 1
+                lsqderiv(self.drdp, self.drdy, drdpdp, self.drdpdpdp, self.r)
+            with self.assertRaises(AssertionError):
+                drdpdpdp = np.array(self.drdpdpdp)
+                drdpdpdp[:, 0, 1, 2] += 1
+                lsqderiv(self.drdp, self.drdy, self.drdpdp, drdpdpdp, self.r)
+            with self.assertRaises(AssertionError):
+                drdpdpdp = np.array(self.drdpdpdp)
+                drdpdpdp[:, 0, 0, 1] += 1
+                lsqderiv(self.drdp, self.drdy, self.drdpdp, drdpdpdp, self.r)
+            with self.assertRaises(AssertionError):
+                drdpdpdp = np.array(self.drdpdpdp)
+                drdpdpdp[:, 0, 1, 0] += 1
+                lsqderiv(self.drdp, self.drdy, self.drdpdp, drdpdpdp, self.r)
+            with self.assertRaises(AssertionError):
+                drdpdpdp = np.array(self.drdpdpdp)
+                drdpdpdp[:, 1, 0, 0] += 1
+                lsqderiv(self.drdp, self.drdy, self.drdpdp, drdpdpdp, self.r)
+        
+        def test_nonfinite(self):
+            def dirty(a, x):
+                b = np.array(a)
+                b[tuple(np.random.randint(l) for l in a.shape)] = x
+                return b
+            
+            for x in (np.inf, np.nan):
+                with self.assertRaises(ValueError):
+                    drdp = dirty(self.drdp, x)
+                    lsqderiv(drdp, self.drdy, self.drdpdp, self.drdpdpdp, self.r)
+                with self.assertRaises(ValueError):
+                    drdy = dirty(self.drdy, x)
+                    lsqderiv(self.drdp, drdy, self.drdpdp, self.drdpdpdp, self.r)
+                with self.assertRaises(ValueError):
+                    drdpdp = dirty(self.drdpdp, x)
+                    lsqderiv(self.drdp, self.drdy, drdpdp, self.drdpdpdp, self.r)
+                with self.assertRaises(ValueError):
+                    drdpdpdp = dirty(self.drdpdpdp, x)
+                    lsqderiv(self.drdp, self.drdy, self.drdpdp, drdpdpdp, self.r)
+                with self.assertRaises(ValueError):
+                    r = dirty(self.r, x)
+                    lsqderiv(self.drdp, self.drdy, self.drdpdp, self.drdpdpdp, r)
     
     unittest.main()
