@@ -122,7 +122,7 @@ if __name__ == '__main__':
     
     class TestDerivatives(unittest.TestCase):
         
-        def fit(self, f, true_p, y=None):
+        def fit(self, f, true_p, y=None, deriv3=False):
             def r(p, y):
                 return y - f(p)
             jac = autograd.jacobian(r, 0)
@@ -143,11 +143,15 @@ if __name__ == '__main__':
             assert np.allclose(drdy, np.eye(len(y)))
             
             drdpdp = hess(result.x, y)
-            assert np.allclose(drdpdp, np.swapaxes(drdpdp, 1, 2))
+            
+            if deriv3:
+                jhess = autograd.jacobian(hess, 0)
+                drdpdpdp = jhess(result.x, y)
+                return result.x, drdp, drdy, drdpdp, drdpdpdp, result.fun
             
             return result.x, drdp, drdy, drdpdp
         
-        def fit_numjac(self, f, p0):
+        def fit_numjac(self, f, p0, y=None):
             def r(p, y):
                 return y - f(p)
             jac = autograd.jacobian(r, 0)
@@ -159,10 +163,11 @@ if __name__ == '__main__':
                 )
                 return re.x
             
-            y = f(p0)
+            if y is None:
+                y = f(p0)
             return numdifftools.Jacobian(fun)(y)
                 
-        def fit_numhess(self, f, p0):
+        def fit_numhess(self, f, p0, y=None):
             def r(p, y):
                 return y - f(p)
             jac = autograd.jacobian(r, 0)
@@ -180,7 +185,8 @@ if __name__ == '__main__':
                 _, dpdy = lsqderiv(drdp, drdy, drdpdp, residuals=result.fun, compute_hessian=False)
                 return dpdy
             
-            y = f(p0)
+            if y is None:
+                y = f(p0)
             dpdydy = numdifftools.Jacobian(fun)(y)
             return np.swapaxes(dpdydy, 1, 2)
             
@@ -228,7 +234,7 @@ if __name__ == '__main__':
         def test_dtype(self):
             self.test_linear(np.float32)
         
-        def test_generic(self):
+        def test_stochastic(self):
             p = 1/5 * np.random.randn(2)
             H = 1/5 * np.random.randn(3, len(p))
             f = lambda p: np.cos(1/2 + 1/3 * (1 + H) @ (1 + p))
@@ -252,6 +258,30 @@ if __name__ == '__main__':
             self.assertTrue(jclose)
             self.assertTrue(hclose)
     
+        def test_exact(self):
+            p = 1/5 * np.random.randn(2)
+            H = 1/5 * np.random.randn(3, len(p))
+            f = lambda p: np.cos(1/2 + 1/3 * (1 + H) @ (1 + p))
+            
+            y = f(p) + 1/5 * np.random.randn(H.shape[0])
+            p, drdp, drdy, drdpdp, drdpdpdp, r = self.fit(f, p, y, True)
+            A, dpdy, dpdydy = lsqderiv(drdp, drdy, drdpdp, drdpdpdp, r, True)
+            self.common_checks(A, dpdy, dpdydy, *H.shape)
+            
+            dpdy_num = self.fit_numjac(f, p, y)
+            dpdydy_num = self.fit_numhess(f, p, y)
+            
+            jclose = np.allclose(dpdy, dpdy_num, rtol=1e-4)
+            if not jclose:
+                print(dpdy)
+                print(dpdy_num)
+            hclose = np.allclose(dpdydy, dpdydy_num, rtol=1e-4)
+            if not hclose:
+                print(dpdydy)
+                print(dpdydy_num)
+            self.assertTrue(jclose)
+            self.assertTrue(hclose)
+
     class TestInput(unittest.TestCase):
         
         def setUp(self):
