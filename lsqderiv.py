@@ -41,9 +41,9 @@ def lsqderiv(drdp, drdy, drdpdp=None, drdpdpdp=None, residuals=None, compute_hes
         Hessian of least squares estimate of parameters w.r.t. data. Returned
         only if `compute_hessian` is True.
     """
-    # TODO:
-    # diagonal hessian with drdpdp.shape == (n, k)
-    # broadcasting
+    # TODO (eventually):
+    # diagonal hessian when drdpdp.shape == (n, k)
+    # broadcasting (mainly for drdy which is often np.eye(n))
     # vectorization
     # replace various einsums with direct op
     # remove sign changes and zero term
@@ -51,6 +51,7 @@ def lsqderiv(drdp, drdy, drdpdp=None, drdpdpdp=None, residuals=None, compute_hes
     # avoid duplicate off-diagonal in computing dpdydy
     # do I need an SVD cut on drdp?
     # allow asymmetric inputs by implicitly taking the symmetric part
+    # support sparse matrices
     
     # Check input
     drdp = np.asarray_chkfinite(drdp)
@@ -275,7 +276,7 @@ if __name__ == '__main__':
             if not jclose:
                 print(dpdy)
                 print(dpdy_num)
-            hclose = np.allclose(dpdydy, dpdydy_num, rtol=1e-4)
+            hclose = np.allclose(dpdydy, dpdydy_num, rtol=1e-3)
             if not hclose:
                 print(dpdydy)
                 print(dpdydy_num)
@@ -351,6 +352,21 @@ if __name__ == '__main__':
             with self.assertRaises(AssertionError):
                 drdpdpdp = np.array(self.drdpdpdp)
                 drdpdpdp[:, 1, 0, 0] += 1
+                lsqderiv(self.drdp, self.drdy, self.drdpdp, drdpdpdp, self.r)
+            with self.assertRaises(AssertionError):
+                drdpdpdp = np.array(self.drdpdpdp)
+                drdpdpdp[:, 1, 0, 0] += 1
+                drdpdpdp[:, 0, 1, 0] += 1
+                lsqderiv(self.drdp, self.drdy, self.drdpdp, drdpdpdp, self.r)
+            with self.assertRaises(AssertionError):
+                drdpdpdp = np.array(self.drdpdpdp)
+                drdpdpdp[:, 1, 0, 0] += 1
+                drdpdpdp[:, 0, 0, 1] += 1
+                lsqderiv(self.drdp, self.drdy, self.drdpdp, drdpdpdp, self.r)
+            with self.assertRaises(AssertionError):
+                drdpdpdp = np.array(self.drdpdpdp)
+                drdpdpdp[:, 0, 1, 0] += 1
+                drdpdpdp[:, 0, 0, 1] += 1
                 lsqderiv(self.drdp, self.drdy, self.drdpdp, drdpdpdp, self.r)
         
         def test_nonfinite(self):
