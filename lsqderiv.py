@@ -1,11 +1,11 @@
 import numpy as np
 
-def lsqderiv(drdp, drdy, drdpdp):
+def lsqderiv(drdp, drdy, drdpdp=None, drdpdpdp=None, residuals=0, compute_hessian=False):
     """
     Compute the derivatives of a least squares estimate w.r.t. data. The least
     squares estimate is defined as
     
-        p = argmin_{p'} sum_i r_i(p', y)^2
+        p(y) = argmin_{p'} sum_i r_i(p', y)^2
     
     where r(p, y) is a "residuals" vector that depends on a "parameters" vector
     p and a "data" vector y.
@@ -16,21 +16,33 @@ def lsqderiv(drdp, drdy, drdpdp):
         Jacobian of residuals w.r.t. parameters.
     drdy : array (n, n)
         Jacobian of residuals w.r.t. data.
-    drdpdp : array (n, k, k)
-        Hessian of residuals w.r.t. parameters.
+    drdpdp : array (n, k, k) or None
+        Hessian of residuals w.r.t. parameters. It is not needed if you are
+        computing only the first derivatives and `residuals` is zero.
+    drdpdpdp : array (n, k, k, k) or None
+        Tensor of third derivatives of residuals w.r.t parameters. Needed only
+        if `compute_hessian` is True and `residuals` is nonzero.
+    residuals : scalar or array (n,) (default 0)
+        If 0, the derivatives are not computed exactly, but instead with
+        residuals set to 0. If you got p(y) minimizing ||y - f(p)||^2, this
+        means computing the derivatives at f(p) instead of y. This gives an
+        estimate of the "true" derivatives. If nonzero, the exact derivatives at
+        the given residuals are computed.
+    compute_hessian : bool (default False)
+        If False, compute and return only the jacobian.
     
-    Return
-    ------
+    Returns
+    -------
     A : array (k, k)
         drdp.T @ drdp
     dpdy : array (k, n)
         Jacobian of least squares estimate of parameters w.r.t. data.
     dpdydy : array (k, n, n)
-        Hessian of least squares estimate of parameters w.r.t. data.
+        Hessian of least squares estimate of parameters w.r.t. data. Returned
+        only if `compute_hessian` is True.
     """
     # TODO:
     # diagonal hessian with drdpdp.shape == (n, k)
-    # compute gradient only with drdpdp=None by default
     # broadcasting
     # vectorization
     # replace various einsums with direct op
@@ -47,40 +59,61 @@ def lsqderiv(drdp, drdy, drdpdp):
     drdy = np.asarray_chkfinite(drdy)
     assert drdy.shape == (n, n)
     
-    drdpdp = np.asarray_chkfinite(drdpdp)
-    assert drdpdp.shape == (n, k, k)
+    compute_hessian = bool(compute_hessian)
+    zero_residuals = np.isscalar(residuals) and residuals == 0
+    
+    if drdpdp is None:
+        assert zero_residuals and not compute_hessian
+    else:
+        drdpdp = np.asarray_chkfinite(drdpdp)
+        assert drdpdp.shape == (n, k, k)
+        assert np.allclose(drdpdp, np.swapaxes(drdpdp, 1, 2))
+    
+    if drdpdpdp is None:
+        assert zero_residuals or not compute_hessian
+    else:
+        drdpdpdp = np.asarray_chkfinite(drdpdpdp)
+        assert drdpdpdp.shape == (n, k, k, k)
+        assert np.allclose(drdpdpdp, np.swapaxes(drdpdpdp, 1, 2))
+        assert np.allclose(drdpdpdp, np.swapaxes(drdpdpdp, 1, 3))
     
     # g: gradient of the cost function 1/2 * r.T @ r
     dgdp = np.einsum('ia,ib->ab', drdp, drdp)
-    # dgdp += np.einsum('i,iab->ab', r, drdpdp)
+    if not zero_residuals:
+        dgdp += np.einsum('i,iab->ab', residuals, drdpdp)
     dgdy = np.einsum('ia,ik->ak', drdp, drdy)
-    dgdydy = 0
-    dgdpdy = np.einsum('iab,ik->abk', drdpdp, drdy)
-    dr3 = np.einsum('ia,ibg->abg', drdp, drdpdp)
-    dgdpdp = dr3 + np.einsum('bga', dr3) + np.einsum('gab', dr3)
-    # dgdpdp += np.einsum('i,iabg->abg', r, dgdpdpdp)
+    if compute_hessian:
+        dgdydy = 0
+        dgdpdy = np.einsum('iab,ik->abk', drdpdp, drdy)
+        dr3 = np.einsum('ia,ibg->abg', drdp, drdpdp)
+        dgdpdp = dr3 + np.einsum('bga', dr3) + np.einsum('gab', dr3)
+        if not zero_residuals:
+            dgdpdp += np.einsum('i,iabg->abg', residuals, drdpdpdp)
 
     A = dgdp
     B = -dgdy
     dpdy = linalg.solve(A, B, assume_a='pos')
 
-    C = -dgdydy
-    dg2 = np.einsum('abk,bq->akq', dgdpdy, dpdy)
-    C -= dg2 + np.einsum('aqk', dg2)
-    C -= np.einsum('abg,bk,gq->akq', dgdpdp, dpdy, dpdy)
-    assert np.allclose(C, np.swapaxes(C, 1, 2))
-    C = C.reshape(k, n * n)
-    dpdydy = linalg.solve(A, C, assume_a='pos')
-    dpdydy = dpdydy.reshape(k, n, n)
+    if compute_hessian:
+        C = -dgdydy
+        dg2 = np.einsum('abk,bq->akq', dgdpdy, dpdy)
+        C -= dg2 + np.einsum('aqk', dg2)
+        C -= np.einsum('abg,bk,gq->akq', dgdpdp, dpdy, dpdy)
+        assert np.allclose(C, np.swapaxes(C, 1, 2))
+        C = C.reshape(k, n * n)
+        dpdydy = linalg.solve(A, C, assume_a='pos')
+        dpdydy = dpdydy.reshape(k, n, n)
     
-    return A, dpdy, dpdydy
+        return A, dpdy, dpdydy
+    
+    return A, dpdy
 
 if __name__ == '__main__':
     import unittest
     from autograd import numpy as np
     import autograd
     from scipy import optimize, linalg
-    import numdiff
+    import numdifftools
     
     class TestLSQDeriv(unittest.TestCase):
         
@@ -88,41 +121,64 @@ if __name__ == '__main__':
             def r(p, y):
                 return y - f(p)
             jac = autograd.jacobian(r, 0)
+            jacdata = autograd.jacobian(r, 1)
+            hess = autograd.hessian(r, 0)
+
             if y is None:
                 true_y = f(true_p)
                 y = true_y + np.random.randn(*true_y.shape)
-            result = optimize.least_squares(r, true_p, jac=jac, args=(y,), ftol=1e-12, gtol=1e-12, xtol=1e-10)
+
+            result = optimize.least_squares(r, true_p, jac=jac, args=(y,))
             assert result.success
             
             drdp = jac(result.x, y)
             assert np.allclose(drdp, result.jac)
-            jacdata = autograd.jacobian(r, 1)
-            hess = autograd.hessian(r, 0)
-            drdy = jacdata(result.x, y)
-            drdpdp = hess(result.x, y)
             
+            drdy = jacdata(result.x, y)
             assert np.allclose(drdy, np.eye(len(y)))
+            
+            drdpdp = hess(result.x, y)
             assert np.allclose(drdpdp, np.swapaxes(drdpdp, 1, 2))
+            
             return result.x, drdp, drdy, drdpdp
         
-        def fit_dd(self, f, p0, y, step=None):
+        def fit_numjac(self, f, p0):
             def r(p, y):
                 return y - f(p)
             jac = autograd.jacobian(r, 0)
-            result = optimize.least_squares(r, p0, jac=jac, args=(y,), ftol=1e-12, gtol=1e-12, xtol=1e-10)
-            assert result.success
 
             def fun(y):
                 re = optimize.least_squares(
-                    r, result.x, jac=jac, args=(y,), method='lm',
-                    ftol=1e-12, xtol=1e-12, gtol=1e-12
+                    r, p0, jac=jac, args=(y,), method='lm',
+                    ftol=1e-10, xtol=1e-10, gtol=1e-10
                 )
-                assert re.success
                 return re.x
-            dpdy, dpdydy = numdiff.numdiff(fun, y, step=step)
-                            
-            return result.x, dpdy, dpdydy
+            
+            y = f(p0)
+            return numdifftools.Jacobian(fun)(y)
                 
+        def fit_numhess(self, f, p0):
+            def r(p, y):
+                return y - f(p)
+            jac = autograd.jacobian(r, 0)
+            jacdata = autograd.jacobian(r, 1)
+            hess = autograd.hessian(r, 0)
+
+            def fun(y):
+                result = optimize.least_squares(
+                    r, p0, jac=jac, args=(y,), method='lm',
+                    ftol=1e-10, xtol=1e-10, gtol=1e-10
+                )
+                drdp = result.jac
+                drdy = jacdata(result.x, y)
+                drdpdp = hess(result.x, y)
+                _, dpdy = lsqderiv(drdp, drdy, drdpdp, residuals=result.fun, compute_hessian=False)
+                return dpdy
+            
+            y = f(p0)
+            dpdydy = numdifftools.Jacobian(fun)(y)
+            return np.swapaxes(dpdydy, 1, 2)
+            
         def common_checks(self, A, dpdy, dpdydy, n, k, dtype=np.float64):
             # Check dtypes
             self.assertEqual(A.dtype, dtype)
@@ -133,6 +189,11 @@ if __name__ == '__main__':
             self.assertEqual(A.shape, (k, k))
             self.assertEqual(dpdy.shape, (k, n))
             self.assertEqual(dpdydy.shape, (k, n, n))
+            
+            # Check finiteness
+            self.assertTrue(np.all(np.isfinite(A)))
+            self.assertTrue(np.all(np.isfinite(dpdy)))
+            self.assertTrue(np.all(np.isfinite(dpdydy)))
             
             # Check symmetries
             self.assertTrue(np.allclose(A, A.T))
@@ -151,7 +212,7 @@ if __name__ == '__main__':
             drdy = np.array(drdy, dtype=dtype)
             drdpdp = np.array(drdpdp, dtype=dtype)
             
-            A, dpdy, dpdydy = lsqderiv(drdp, drdy, drdpdp)
+            A, dpdy, dpdydy = lsqderiv(drdp, drdy, drdpdp, compute_hessian=True)
             self.common_checks(A, dpdy, dpdydy, *H.shape, dtype)
             
             # Check values
@@ -163,19 +224,27 @@ if __name__ == '__main__':
             self.test_linear(np.float32)
         
         def test_generic(self):
-            p = np.random.randn(3)
-            H = np.random.randn(5, len(p))
-            f = lambda p: H @ p + (H @ p) ** 3
+            p = 1/5 * np.random.randn(2)
+            H = 1/5 * np.random.randn(3, len(p))
+            f = lambda p: np.cos(1/2 + 1/3 * (1 + H) @ (1 + p))
             
-            y = f(p) + np.random.randn(H.shape[0])
+            y = f(p) + 1/5 * np.random.randn(H.shape[0])
             p, drdp, drdy, drdpdp = self.fit(f, p, y)
-            A, dpdy, dpdydy = lsqderiv(drdp, drdy, drdpdp)
+            A, dpdy, dpdydy = lsqderiv(drdp, drdy, drdpdp, compute_hessian=True)
             self.common_checks(A, dpdy, dpdydy, *H.shape)
             
-            p2, dpdy_num, dpdydy_num = self.fit_dd(f, p, y)
-            assert np.allclose(p, p2)
+            dpdy_num = self.fit_numjac(f, p)
+            dpdydy_num = self.fit_numhess(f, p)
             
-            self.assertTrue(np.allclose(dpdy, dpdy_num))
-            self.assertTrue(np.allclose(dpdydy, dpdydy_num, atol=1e-6))
+            jclose = np.allclose(dpdy, dpdy_num)
+            if not jclose:
+                print(dpdy)
+                print(dpdy_num)
+            hclose = np.allclose(dpdydy, dpdydy_num)
+            if not hclose:
+                print(dpdydy)
+                print(dpdydy_num)
+            self.assertTrue(jclose)
+            self.assertTrue(hclose)
     
     unittest.main()
