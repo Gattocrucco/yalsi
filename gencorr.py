@@ -89,7 +89,7 @@ def gen_ordered_groupings(rank, no_loners=True):
     p = IntegerPartition([rank])
     end = IntegerPartition([1] * rank)
     ilist = []
-    while p > end:
+    while True:
         if not no_loners or p.as_dict().get(1, 0) == 0:
             indices_bags = dict()
             base_index = 0
@@ -98,29 +98,31 @@ def gen_ordered_groupings(rank, no_loners=True):
                 bags[-1] = tuple(base_index + j for j in range(group_count))
                 base_index += group_count
                 indices_bags[group_size] = bags
-            gen_index_perm(ilist, rank, (), indices_bags, no_loners)
+            gen_index_perm(ilist, rank, (), indices_bags)
+        if p == end:
+            break
         p = p.prev_lex()
     return ilist
 
-def gen_index_perm(ilist, rank, indices, indices_bags, no_loners):
-    ind = ' ' * 4 * len(indices)
-    print(f'{ind}gen_index_perm({len(ilist)}, {rank}, {indices}, {indices_bags})')
+def gen_index_perm(ilist, rank, indices, indices_bags):
+    # ind = ' ' * 4 * len(indices)
+    # print(f'{ind}gen_index_perm({len(ilist)}, {rank}, {indices}, {indices_bags})')
     if len(indices) == rank:
         ilist.append(indices)
         return
     
     for group_size, bags in indices_bags.items():
-        print(f'{ind} {group_size}: {bags}')
-        assert(len(bags) == group_size)
+        # print(f'{ind} {group_size}: {bags}')
+        assert len(bags) == group_size
         for i, bag in enumerate(bags):
-            print(f'{ind}  {i}: {bag}')
+            # print(f'{ind}  {i}: {bag}')
             for j in range(len(bag)):
-                print(f'{ind}   {j}: {bag[j]}')
+                # print(f'{ind}   {j}: {bag[j]}')
                 new_indices_bags = copy.deepcopy(indices_bags)
                 new_indices_bags[group_size][i] = bag[:j] + bag[j + 1:]
                 if i > 0:
                     new_indices_bags[group_size][i - 1] = prev_bag + bag[j:j + 1]
-                gen_index_perm(ilist, rank, indices + bag[j:j + 1], new_indices_bags, no_loners)
+                gen_index_perm(ilist, rank, indices + bag[j:j + 1], new_indices_bags)
                 if i == len(bags) - 1:
                     break
             prev_bag = bag
