@@ -31,6 +31,15 @@ def checkmom(moments, threshold=0):
     """
     # TODO: is there a specific better way of checking if a hankel matrix is
     # positive definite?
+    # Problem: in general positive definite hankel matrices are ill-conditioned.
+    # What are the implications for moment checking? That with many (where
+    # "many" < 100) moments the checking is inaccurate?
+    # Possible idea: standardize in a way that makes the moments more uniform
+    # instead of E[x^2] = 1. At some point it would stop working because for
+    # example the normal moments go like k! while the scaling is s^k.
+    # See https://doi.org/10.1016/0377-0427(95)00108-5, who claims a
+    # preconditioning that obtains linear condition in n. I don't have clear
+    # how I check positive definiteness through a conditioning, think it over.
     
     # Check input
     assert not np.isscalar(moments)
