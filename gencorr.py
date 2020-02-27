@@ -218,7 +218,7 @@ class Reductor:
             else:
                 l.append(obj)
         self._list = l
-        return l[0] if len(l) == 1 else self
+        return self
     
     def sort(self):
         try:
@@ -233,13 +233,13 @@ class Reductor:
     def __eq__(self, obj):
         return isinstance(obj, self.__class__) and len(self._list) == len(obj._list) and all(x == y for x, y in zip(self._list, obj._list))
     
+    def __repr__(self):
+        return ' '.join('(' + x.__repr__() + ')' if isinstance(x, Reductor) else x.__repr__() for x in self._list)
+    
 class Mult(Reductor):
     """
     Represent a product.
     """
-    
-    def __repr__(self):
-        return ' '.join('(' + x.__repr__() + ')' if isinstance(x, Reductor) else x.__repr__() for x in self._list)
     
     def reduce(self):
         """
@@ -356,6 +356,11 @@ class Mult(Reductor):
     def normalize_D(self):
         """
         Canonicalize the usage of mute indices.
+        
+        BUUUUG: I'm not catching this symmetry:
+        24 Hij Hil Hjk Hkl Viijjkkll + 
+        24 Hij Hik Hjl Hkl Viijjkkll
+        swapping k and l they are the same.
         """
         Dobjs = []
         for obj in self._list:
@@ -395,7 +400,7 @@ class Mult(Reductor):
 
 def stripfactor(x):
     if isinstance(x, Mult) and x._list and isnum(x._list[0]):
-        return Mult(*x._list[1:])
+        return Mult(*x._list[1:]) if len(x._list) >= 3 else x._list[1]
     else:
         return x
 
@@ -454,25 +459,40 @@ class Sum(Reductor):
             self._list.append(Mult(counts[i], terms[i]) if counts[i] != 1 else terms[i])
         return self
 
-class Summation:
+class Summation(Reductor):
     """
     Represent a summation where the summand is a product with indices separated
     and unique by factor.
+    
+    Example:
+    gencorr.Summation(*'abcde').explode().recursive('expand')
+    .recursive('concat').recursive('reduce').recursive('sort').harvest()
+    .recursive('reduce')
     """
     
-    def __init__(self, *args):
-        """
-        args = list of objects in the product
-        """
-        self._list = list(args)
+    def __repr__(self):
+        return '∑ ' + super().__repr__()
     
     def explode(self):
         """
         Transform from a summation where items with overlapping indices are
         skipped to a sum of summations over full ranges.
         """
+        if len(self._list) <= 1:
+            return self
+        
         ilist = gen_ordered_groupings(len(self._list), no_loners=False)
         
+        terms = []
+        for indices in ilist[:-1]:
+            # [:-1] because the last element is all indices different
+            objs = [[] for _ in range(max(indices) + 1)]
+            for i, idx in enumerate(indices):
+                objs[idx].append(copy.deepcopy(self._list[i]))
+            groups = [Mult(*group) for group in objs]
+            terms.append(Mult(-1, Summation(*groups).explode()))
+        
+        return Sum(self, *terms) 
 
 # def gen_terms(terms, vars, l, n_2, n_1):
 #     if n_2 == n_1 == 0:
