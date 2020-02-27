@@ -54,19 +54,22 @@ class Tensor:
     def __eq__(self, obj):
         return isinstance(obj, type(self)) and self._rank == obj._rank and self._indices == obj._indices
     
-class V(Tensor):
-    """
-    Represent an expectation over a product of independent zero-mean variables.
-    """
-    
-    def __repr__(self):
+    def __repr__(self, prefix='T'):
         if self._indices:
             rankstr = ''
             indstr = ''.join(map(lambda i: indices[i], self._indices))
         else:
             indstr = ''
             rankstr = f'{self._rank}'
-        return f'V{rankstr}{indstr}'
+        return f'{prefix}{rankstr}{indstr}'
+    
+class V(Tensor):
+    """
+    Represent an expectation over a product of independent zero-mean variables.
+    """
+    
+    def __repr__(self):
+        return super().__repr__('V')
     
     def __lt__(self, d):
         if isinstance(d, D):
@@ -408,6 +411,12 @@ class Mult(Reductor):
         for d in Dobjs:
             d._indices = tuple(p[i] for i in d._indices)
         return self
+    
+    def as_summation(self):
+        """
+        If indices are separated by tensor, trasform to a Summation object.
+        """
+        pass
 
 def stripfactor(x):
     if isinstance(x, Mult) and x._list and isnum(x._list[0]):
