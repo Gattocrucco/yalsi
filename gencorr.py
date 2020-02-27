@@ -30,15 +30,12 @@ indices = ('i', 'j', 'k', 'l', 'm', 'n', 'o', 'p')
 def isnum(x):
     return isinstance(x, int) or isinstance(x, Fraction)
 
-class V:
-    """
-    Represent an expectation over a product of independent zero-mean variables.
-    """
+class Tensor:
     
     def __init__(self, rank, indices=()):
         """
-        rank = number of variables in the product
-        indices = labels of the variables. can be empty, can have repetitions
+        rank = number of indices
+        indices = tuple of integers. can be empty, can have repetitions
         """
         self._rank = rank
         self._indices = tuple(indices)
@@ -47,7 +44,23 @@ class V:
     def sort_indices(self):
         self._indices = tuple(sorted(self._indices))
         return self
+    
+    def __lt__(self, d):
+        if isinstance(d, Tensor):
+            return self._rank < d._rank or self._rank == d._rank and self._indices < d._indices
+        elif isnum(d):
+            return False
+        else:
+            return NotImplemented
 
+    def __eq__(self, obj):
+        return isinstance(obj, type(self)) and self._rank == obj._rank and self._indices == obj._indices
+    
+class V(Tensor):
+    """
+    Represent an expectation over a product of independent zero-mean variables.
+    """
+    
     def __repr__(self):
         if self._indices:
             rankstr = ''
@@ -63,17 +76,10 @@ class V:
         return f'V{rankstr}{indstr}'
     
     def __lt__(self, d):
-        if isinstance(d, V):
-            return self._rank < d._rank or self._rank == d._rank and self._indices < d._indices
-        elif isinstance(d, D):
-            return False
-        elif isnum(d):
+        if isinstance(d, D):
             return False
         else:
-            raise TypeError("'<' not supported between instances of '{}' and '{}'".format(D, d.__class__))
-    
-    def __eq__(self, obj):
-        return isinstance(obj, V) and self._rank == obj._rank and self._indices == obj._indices
+            return super().__lt__(d)
     
     def index_V(self):
         """
@@ -127,7 +133,7 @@ def gen_index_perm(ilist, rank, indices, indices_bags):
                     break
             prev_bag = bag
 
-class D:
+class D(Tensor):
     """
     Represents a derivatives tensor.
     """
@@ -138,14 +144,9 @@ class D:
         var = arbitrary object used as label to identify what is being derived
         indices = tuple of indices for the tensor, default empty
         """
-        self._rank = rank
+        super().__init__(rank, indices)
         self._var = var
-        self._indices = tuple(indices)
     
-    def sort_indices(self):
-        self._indices = tuple(sorted(self._indices))
-        return self
-
     def __repr__(self):
         letter = 'G' if self._rank == 1 else 'H'
         if self._indices:
@@ -160,16 +161,14 @@ class D:
     
     def __lt__(self, d):
         if isinstance(d, D):
-            return self._var < d._var or self._var == d._var and self._rank < d._rank or self._rank == d._rank and self._indices < d._indices
+            return self._var < d._var or self._var == d._var and super().__lt__(d)
         elif isinstance(d, V):
             return True
-        elif isnum(d):
-            return False
         else:
-            return NotImplemented
+            return super().__lt__(d)
     
     def __eq__(self, obj):
-        return isinstance(obj, D) and self._rank == obj._rank and self._var == obj._var and self._indices == obj._indices
+        return super().__eq__(obj) and self._var == obj._var
     
     def assume_diagonal(self):
         """
@@ -324,6 +323,8 @@ class Mult(Reductor):
         Replace D objects with a sum over all permutations of indices of the
         D objects. Makes sense because the V object represents a symmetric
         tensor.
+        
+        Currently not used anywhere.
         """
         Dobjs = []
         other = []
@@ -361,6 +362,9 @@ class Mult(Reductor):
         24 Hij Hil Hjk Hkl Viijjkkll + 
         24 Hij Hik Hjl Hkl Viijjkkll
         swapping k and l they are the same.
+        Also this:
+        H(a)ij G(b)j G(c)i Viijj + 
+        H(a)ij G(b)i G(c)j Viijj
         """
         Dobjs = []
         for obj in self._list:
