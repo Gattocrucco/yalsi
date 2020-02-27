@@ -23,8 +23,6 @@ over, with the constraint that different indices can not yield the same value
 start to finish).
 """
 
-SIMPL_V_REPR = False
-
 indices = ('i', 'j', 'k', 'l', 'm', 'n', 'o', 'p')
 
 def isnum(x):
@@ -64,12 +62,7 @@ class V(Tensor):
     def __repr__(self):
         if self._indices:
             rankstr = ''
-            if SIMPL_V_REPR:
-                c = Counter(self._indices)
-                idxs = filter(lambda i: c[i] > 2, self._indices)
-            else:
-                idxs = self._indices
-            indstr = ''.join(map(lambda i: indices[i], idxs))
+            indstr = ''.join(map(lambda i: indices[i], self._indices))
         else:
             indstr = ''
             rankstr = f'{self._rank}'
@@ -90,6 +83,20 @@ class V(Tensor):
         # We skip loners because E[x_i] = 0. We need at least two equal
         # variables in the product to have a nonzero moment.
         return Sum(*[V(self._rank, indices) for indices in ilist])
+    
+    def separate_V(self):
+        """
+        Separate into a product of V for different indices, assuming unitary
+        variance.
+        """
+        assert self._indices
+        c = Counter(self._indices)
+        return Mult(*[
+            0 if count == 1
+            else 1 if count == 2
+            else V(count, (idx,) * count)
+            for idx, count in c.items()
+        ])
 
 def gen_ordered_groupings(rank, no_loners=True):
     p = IntegerPartition([rank])
