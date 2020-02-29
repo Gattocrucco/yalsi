@@ -3,7 +3,7 @@ from sympy.combinatorics import Permutation
 import copy
 import numpy as np
 from fractions import Fraction
-from collections import Counter, OrderedDict
+from collections import Counter, OrderedDict, defaultdict
 
 __doc__ = """
 Usage examples:
@@ -28,7 +28,28 @@ indices = ('i', 'j', 'k', 'l', 'm', 'n', 'o', 'p')
 def isnum(x):
     return isinstance(x, int) or isinstance(x, Fraction)
 
-class Tensor:
+class Expression:
+    
+    def recursive(self, method, *args):
+        """
+        Recursively apply
+            obj = obj.method(*args)
+        on all the objects in the expression, starting from the leaves.
+        """
+        # print(f'recursive {method} on {self}')
+        if hasattr(self, '_list'):
+            for i in range(len(self._list)):
+                if hasattr(self._list[i], 'recursive'):
+                    self._list[i] = self._list[i].recursive(method, *args)
+                elif hasattr(self._list[i], method):
+                    # print(f'    {method} on {self._list[i]}')
+                    self._list[i] = getattr(self._list[i], method)(*args)
+        if hasattr(self, method):
+            # print(f'    {method} on {self}')
+            self = getattr(self, method)(*args)
+        return self
+
+class Tensor(Expression):
     
     def __init__(self, rank, indices=()):
         """
@@ -41,6 +62,13 @@ class Tensor:
     
     def sort_indices(self):
         self._indices = tuple(sorted(self._indices))
+        return self
+    
+    def apply_index(self, idx):
+        """
+        Replace all indices with idx.
+        """
+        self._indices = (idx,) * len(self._indices)
         return self
     
     def __lt__(self, d):
@@ -189,7 +217,7 @@ class D(Tensor):
         i0 = self._indices[0]
         return self if all(i == i0 for i in self._indices) else 0
 
-class Reductor:
+class Reductor(Expression):
     """
     Represent an associative operation.
     """
@@ -197,24 +225,6 @@ class Reductor:
     def __init__(self, *args):
         self._list = list(args)
 
-    def recursive(self, method):
-        """
-        Recursively apply
-            obj = obj.method()
-        on all the objects in the expression, starting from the leaves.
-        """
-        # print(f'recursive {method} on {self}')
-        for i in range(len(self._list)):
-            if hasattr(self._list[i], 'recursive'):
-                self._list[i] = self._list[i].recursive(method)
-            elif hasattr(self._list[i], method):
-                # print(f'    {method} on {self._list[i]}')
-                self._list[i] = getattr(self._list[i], method)()
-        if hasattr(self, method):
-            # print(f'    {method} on {self}')
-            self = getattr(self, method)()
-        return self
-    
     def concat(self):
         """
         If there are reductors of the same kind in the operands, concatenate
@@ -414,10 +424,20 @@ class Mult(Reductor):
     
     def as_summation(self):
         """
-        If indices are separated by tensor, trasform to a Summation object.
+        If indices are separated by tensor, transform to a Summation object.
         """
-        pass
-
+        if any(map(lambda x: isinstance(x, Tensor) and len(set(x._indices)) != 1, self._list)):
+            return self
+        
+        factors_by_index = defaultdict(list)
+        for obj in self._list:
+            if isinstance(obj, Tensor):
+                key = obj._indices[0]
+            else:
+                key = None
+            factors_by_index[key].append(obj)
+        return Mult(Summation(*[Mult(*l) for l in factors_by_index.values()]), *factors_by_index[None])
+    
 def stripfactor(x):
     if isinstance(x, Mult) and x._list and isnum(x._list[0]):
         return Mult(*x._list[1:]) if len(x._list) >= 3 else x._list[1]
@@ -512,7 +532,16 @@ class Summation(Reductor):
             groups = [Mult(*group) for group in objs]
             terms.append(Mult(-1, Summation(*groups).explode()))
         
-        return Sum(self, *terms) 
+        return Sum(self, *terms)
+    
+    def index_summation(self):
+        """
+        Put indices on all tensors according to the summation term they are in.
+        """
+        for i, obj in enumerate(self._list):
+            if isinstance(obj, Expression):
+                self._list[i] = obj.recursive('apply_index', i)
+        return self
 
 # def gen_terms(terms, vars, l, n_2, n_1):
 #     if n_2 == n_1 == 0:
