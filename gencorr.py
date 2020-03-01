@@ -598,90 +598,145 @@ class Summation(Reductor):
     def python(self):
         return ' * '.join(map(lambda x: x.varname(), self._list))
 
-def gencorr(*vars):
+class Corr:
     """
-    Generates the correlation function for a list of quadratic functions.
-    
-    *vars = list of arbitrary labels for the functions
+    Represent the correlation function for a list of quadratic functions.
     """
     
-    e = Mult(*[Sum(D(1, v), D(2, v)) for v in vars])
+    def __init__(self, *vars):
+        """
+        *vars = list of arbitrary labels for the functions
+        """
+        self._vars = vars
+        self._expr = None
     
-    # do multiplication
-    e = e.recursive('expand')
-    e = e.recursive('concat')
+    def corr(self):
+        """
+        Return the full correlation formula.
+        """
+        if self._expr:
+            return self._expr
+        
+        e = Mult(*[Sum(D(1, v), D(2, v)) for v in self._vars])
     
-    # group equal terms in case there are repeated variables
-    e = e.recursive('sort')
-    e = e.recursive('harvest')
+        # do multiplication
+        e = e.recursive('expand')
+        e = e.recursive('concat')
     
-    # put V tensors
-    e = e.recursive('gen_V')
+        # group equal terms in case there are repeated variables
+        e = e.recursive('sort')
+        e = e.recursive('harvest')
     
-    # split summations into diagonal and off-diagonal
-    e = e.recursive('index_V')
-    e = e.recursive('expand')
-    e = e.recursive('concat')
+        # put V tensors
+        e = e.recursive('gen_V')
     
-    # put indices on D tensors
-    e = e.recursive('index_D')
-    e = e.recursive('sort_indices')
-    e = e.recursive('sort')
-    e = e.recursive('harvest')
-    e = e.recursive('concat')
-    e = e.recursive('reduce')
+        # split summations into diagonal and off-diagonal
+        e = e.recursive('index_V')
+        e = e.recursive('expand')
+        e = e.recursive('concat')
     
-    # normalize usage of mute indices to spot equal terms
-    e = e.recursive('normalize_D')
-    e = e.recursive('sort_indices')
-    e = e.recursive('sort')
-    e = e.recursive('harvest')
-    e = e.recursive('concat')
+        # put indices on D tensors
+        e = e.recursive('index_D')
+        e = e.recursive('sort_indices')
+        e = e.recursive('sort')
+        e = e.recursive('harvest')
+        e = e.recursive('concat')
+        e = e.recursive('reduce')
+    
+        # normalize usage of mute indices to spot equal terms
+        e = e.recursive('normalize_D')
+        e = e.recursive('sort_indices')
+        e = e.recursive('sort')
+        e = e.recursive('harvest')
+        e = e.recursive('concat')
 
-    return e
+        self._expr = e
+        return self._expr
 
-def diagappr(e):
-    """
-    e = gencorr(*vars)
-    
-    Assumes the hessians are diagonal and simplify the expression.
-    """
-    # remove off-diagonal hessians
-    e = e.recursive('assume_diagonal').recursive('reduce')
+    def diag(self):
+        """
+        Return simplified formula assuming hessians are diagonal.
+        """
+        e = copy.deepcopy(self.corr())
+        
+        # remove off-diagonal hessians
+        e = e.recursive('assume_diagonal').recursive('reduce')
 
-    # separate moments by variable, e.g. Viijj = Vii Vjj
-    e = e.recursive('separate_V').recursive('concat').recursive('reduce')
+        # separate moments by variable, e.g. Viijj = Vii Vjj
+        e = e.recursive('separate_V').recursive('concat').recursive('reduce')
 
-    # turn implicit summations into Summation objects
-    e = e.recursive('as_summation').recursive('index_summation').recursive('reduce')
+        # turn implicit summations into Summation objects
+        e = e.recursive('as_summation').recursive('index_summation').recursive('reduce')
 
-    # convert from summations over non overlapping indices to full range
-    e = e.recursive('explode').recursive('expand').recursive('concat').recursive('reduce')
+        # convert from summations over non overlapping indices to full range
+        e = e.recursive('explode').recursive('expand').recursive('concat').recursive('reduce')
 
-    # final simplification
-    e = e.recursive('sort').recursive('harvest')
+        # final simplification
+        e = e.recursive('sort').recursive('harvest')
        
-    return e
+        return e
 
-def diagcode(*vars):
-    """
-    expr = diagappr(gencorr(*vars))
-    """    
-    # collect all summation terms from the expression
-    expr = diagappr(gencorr(*vars))
-    terms = []
-    expr.recursive('gather_summation_terms', terms)
+    def diagcode(self):
+        """
+        Return code for a function computing the formula given by diag().
+        """    
+        # collect all summation terms from the expression
+        expr = self.diag()
+        terms = []
+        expr.recursive('gather_summation_terms', terms)
     
-    # remove duplicate terms
-    terms = [term for term, _ in itertools.groupby(sorted(terms))]
+        # remove duplicate terms
+        terms = [term for term, _ in itertools.groupby(sorted(terms))]
     
-    # write function head
-    fname = f'corrdiag{len(vars)}' + ''.join(sorted(map(str, vars)))
-    fparams = ', '.join(f'G{v}, H{v}' for v in sorted(set(map(str, vars))))
-    fhead = f'def {fname}(V, {fparams}):\n'
+        # write function head
+        fname = f'corrdiag{len(self._vars)}' + ''.join(sorted(map(str, self._vars)))
+        fparams = ', '.join(f'G{v}, H{v}' for v in sorted(set(map(str, self._vars))))
+        fhead = f'def {fname}(V, {fparams}):\n'
     
-    # write code
-    terms_code = ''.join(f'    {t.varname()} = np.sum({t.python()})\n' for t in terms)
-    corr_code = ''.join(f'    c += {m.python()}\n' for m in expr._list)
+        # write code
+        terms_code = ''.join(f'    {t.varname()} = np.sum({t.python()})\n' for t in terms)
+        corr_code = ''.join(f'    c += {m.python()}\n' for m in expr._list)
     
-    return fhead + terms_code + '\n    c = 0\n' + corr_code + '\nreturn c\n'
+        return fhead + terms_code + '\n    c = 0\n' + corr_code + '\n    return c\n'
+
+if __name__ == '__main__':
+    import unittest
+    from scipy import special
+    import checkmom
+    
+    # y = gx + hx^2
+    # E[y^n] = E[(x(g + hx))^n]
+    #        = E[x^n (g + hx)^n]
+    #        = E[x^n sum_k (n k) g^(n-k) h^k x^k]
+    #        = sum_k (n k) g^(n-k) h^k E[x^(n+k)]
+    def direct_diag_comp(Ex, g, h):
+        assert g.shape == h.shape == Ex.shape[1:]
+        assert Ex.shape[0] == 9
+        assert np.all(Ex[0] == 1) and np.all(Ex[1] == 0) and np.all(Ex[2] == 1)
+        assert np.all(checkmom.checkmom(Ex.T))
+        
+        Ey = np.empty((5, len(g)))
+        for n in range(len(Ey)):
+            r = np.arange(n + 1)[:, None]
+            Ey[n] = np.sum(special.binom(n, r) * g ** r[::-1] * h ** r * Ex[n:2*n+1])
+        
+        Esumy = np.zeros(5)
+        Esumy[0] = 1
+        for i in range(len(g)):
+            Esumy = acc_mom(Esumy, Ey[:, i])
+        
+        return Esumy
+    
+    # E[(x + y)^k] = sum_n (k n) E[x^n] E[y^(k-n)]
+    def acc_mom(m1, m2):
+        nsup = len(m1)
+        m = np.empty(nsup)
+        for n in range(nsup):
+            m[n] = np.sum(special.binom(n, np.arange(n + 1)) * m1[:n + 1] * m2[n::-1])
+        return m
+    
+    class TestDiagCode(unittest.TestCase):
+        
+        pass
+        
+    unittest.main()

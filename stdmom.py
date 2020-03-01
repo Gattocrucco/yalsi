@@ -37,7 +37,7 @@ def stdmom(moments, compact_output=False, inplace=False):
         The mean, i.e. `moments[..., 1]` if `moments[..., 0] == 1`.
     var : scalar or array (...,)
         The variance, i.e. `moments[..., 2]` if `moments[..., 1] == 0` and
-        `moments[..., 0] == 0`.
+        `moments[..., 0] == 1`.
     """
     # Check input
     assert not np.isscalar(moments)
