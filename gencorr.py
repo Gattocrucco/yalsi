@@ -4,6 +4,7 @@ import copy
 import numpy as np
 from fractions import Fraction
 from collections import Counter, OrderedDict, defaultdict
+import itertools
 
 __doc__ = """
 Usage examples:
@@ -71,6 +72,10 @@ class Tensor(Expression):
         self._indices = (idx,) * len(self._indices)
         return self
     
+    def clear_indices(self):
+        self._indices = ()
+        return self
+    
     def __lt__(self, d):
         if isinstance(d, Tensor):
             return self._rank < d._rank or self._rank == d._rank and self._indices < d._indices
@@ -136,6 +141,12 @@ class V(Tensor):
             else V(count, (idx,) * count)
             for idx, count in c.items()
         ])
+    
+    def varname(self):
+        return f'v{self._rank}'
+    
+    def python(self):
+        return f'V[{self._rank}]'
 
 def gen_ordered_groupings(rank, no_loners=True):
     p = IntegerPartition([rank])
@@ -201,8 +212,10 @@ class D(Tensor):
             indstr = ''
         if str(self._var) == '':
             varstr = ''
+        elif self._indices:
+            varstr = f'{self._var}_'
         else:
-            varstr = f'({self._var})'
+            varstr = f'{self._var}'
         return f'{letter}{varstr}{indstr}'
     
     def __lt__(self, d):
@@ -220,10 +233,17 @@ class D(Tensor):
         """
         Return self if all the indices are equal, otherwise 0.
         """
-        if not self._indices:
-            return self
-        i0 = self._indices[0]
-        return self if all(i == i0 for i in self._indices) else 0
+        return self if len(set(self._indices)) <= 1 else 0
+    
+    def varname(self):
+        return {1: 'g', 2: 'h'}[self._rank] + str(self._var)
+    
+    def python(self):
+        return {1: 'G', 2: 'H'}[self._rank] + str(self._var)
+    
+    def gather_vars(self, vars):
+        vars.add(self._var)
+        return self
 
 class Reductor(Expression):
     """
@@ -452,6 +472,12 @@ class Mult(Reductor):
                 nontensors.append(obj)
         return Mult(Summation(*[Mult(*l) for l in tensors_by_index.values()]), *nontensors)
     
+    def varname(self):
+        return ''.join(map(lambda x: x.varname(), self._list))
+    
+    def python(self):
+        return ' * '.join(map(lambda x: str(x) if isnum(x) else x.python(), self._list))
+    
 def stripfactor(x):
     if isinstance(x, Mult) and x._list and isnum(x._list[0]):
         return Mult(*x._list[1:]) if len(x._list) >= 3 else x._list[1]
@@ -558,34 +584,26 @@ class Summation(Reductor):
     
     def index_summation(self):
         """
-        Put indices on all tensors according to the summation term they are in.
+        Remove indices from tensors in the summation since they are implicit.
         """
         for i, obj in enumerate(self._list):
             if isinstance(obj, Expression):
-                self._list[i] = obj.recursive('apply_index', i)
+                self._list[i] = obj.recursive('clear_indices')
         return self
+    
+    def gather_summation_terms(self, bag):
+        bag += self._list
+        return self
+    
+    def python(self):
+        return ' * '.join(map(lambda x: x.varname(), self._list))
 
-# def gen_terms(terms, vars, l, n_2, n_1):
-#     if n_2 == n_1 == 0:
-#         terms.append(Mult(*(D(l[i], vars[i]) for i in range(len(l)))))
-#     else:
-#         if n_1 > 0: gen_terms(terms, vars, l + (1,), n_2, n_1 - 1)
-#         if n_2 > 0: gen_terms(terms, vars, l + (2,), n_2 - 1, n_1)
-#
-# def gen_corr_base_expr(*vars):
-#     terms = []
-#     for v_rank in range(len(vars), 1 + 2 * len(vars)):
-#         v_terms = []
-#         for n_2 in range(1 + v_rank // 2):
-#             n_1 = len(vars) - n_2
-#             if n_1 + 2 * n_2 == v_rank:
-#                 gen_terms(v_terms, vars, (), n_2, n_1)
-#         if v_terms:
-#             terms.append(Mult(Sum(*v_terms), V(v_rank)))
-#     return Sum(*terms)
-
-def gen_corr(*vars, what='full'):
-    # e = gen_corr_base_expr(*vars)
+def gencorr(*vars):
+    """
+    Generates the correlation function for a list of quadratic functions.
+    
+    *vars = list of arbitrary labels for the functions
+    """
     
     e = Mult(*[Sum(D(1, v), D(2, v)) for v in vars])
     
@@ -620,23 +638,50 @@ def gen_corr(*vars, what='full'):
     e = e.recursive('harvest')
     e = e.recursive('concat')
 
-    # complete formula
-    if what == 'full':
-        return e
+    return e
+
+def diagappr(e):
+    """
+    e = gencorr(*vars)
     
-    # assume diagonal hessian
-    elif what == 'diag':
-        e = e.recursive('assume_diagonal').recursive('reduce')
+    Assumes the hessians are diagonal and simplify the expression.
+    """
+    # remove off-diagonal hessians
+    e = e.recursive('assume_diagonal').recursive('reduce')
 
-        e = e.recursive('separate_V').recursive('concat').recursive('reduce')
+    # separate moments by variable, e.g. Viijj = Vii Vjj
+    e = e.recursive('separate_V').recursive('concat').recursive('reduce')
 
-        e = e.recursive('as_summation').recursive('reduce')
+    # turn implicit summations into Summation objects
+    e = e.recursive('as_summation').recursive('index_summation').recursive('reduce')
 
-        e = e.recursive('explode').recursive('expand').recursive('concat').recursive('reduce')
+    # convert from summations over non overlapping indices to full range
+    e = e.recursive('explode').recursive('expand').recursive('concat').recursive('reduce')
 
-        e = e.recursive('sort').recursive('index_summation').recursive('harvest')
-           
-        return e
-        
-    else:
-        raise KeyError(what)
+    # final simplification
+    e = e.recursive('sort').recursive('harvest')
+       
+    return e
+
+def diagcode(*vars):
+    """
+    expr = diagappr(gencorr(*vars))
+    """    
+    # collect all summation terms from the expression
+    expr = diagappr(gencorr(*vars))
+    terms = []
+    expr.recursive('gather_summation_terms', terms)
+    
+    # remove duplicate terms
+    terms = [term for term, _ in itertools.groupby(sorted(terms))]
+    
+    # write function head
+    fname = f'corrdiag{len(vars)}' + ''.join(sorted(map(str, vars)))
+    fparams = ', '.join(f'G{v}, H{v}' for v in sorted(set(map(str, vars))))
+    fhead = f'def {fname}(V, {fparams}):\n'
+    
+    # write code
+    terms_code = ''.join(f'    {t.varname()} = np.sum({t.python()})\n' for t in terms)
+    corr_code = ''.join(f'    c += {m.python()}\n' for m in expr._list)
+    
+    return fhead + terms_code + '\n    c = 0\n' + corr_code + '\nreturn c\n'
