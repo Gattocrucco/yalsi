@@ -78,6 +78,14 @@ class Tensor(Expression):
             return False
         else:
             return NotImplemented
+    
+    def __gt__(self, d):
+        if isinstance(d, Tensor):
+            return self._rank > d._rank or self._rank == d._rank and self._indices > d._indices
+        elif isnum(d):
+            return True
+        else:
+            return NotImplemented
 
     def __eq__(self, obj):
         return isinstance(obj, type(self)) and self._rank == obj._rank and self._indices == obj._indices
@@ -247,8 +255,11 @@ class Reductor(Expression):
         return self
     
     def __lt__(self, obj):
-        return isinstance(obj, self.__class__) and self._list[::-1] < obj._list[::-1]
+        return isinstance(obj, Reductor) and self._list[::-1] < obj._list[::-1]
     
+    def __gt__(self, obj):
+        return not isinstance(obj, Reductor) or self._list[::-1] > obj._list[::-1]
+
     def __eq__(self, obj):
         return isinstance(obj, self.__class__) and len(self._list) == len(obj._list) and all(x == y for x, y in zip(self._list, obj._list))
     
@@ -321,6 +332,9 @@ class Mult(Reductor):
         """
         If there is a V object, take its indices and distribute them in order
         over D objects.
+        
+        (Maybe change name to index_D_from_V, and collect all V objects
+        instead of the first one in the multiplication)
         """
         for Vobj in self._list:
             if isinstance(Vobj, V):
@@ -429,14 +443,14 @@ class Mult(Reductor):
         if any(map(lambda x: isinstance(x, Tensor) and len(set(x._indices)) != 1, self._list)):
             return self
         
-        factors_by_index = defaultdict(list)
+        tensors_by_index = defaultdict(list)
+        nontensors = []
         for obj in self._list:
             if isinstance(obj, Tensor):
-                key = obj._indices[0]
+                tensors_by_index[obj._indices[0]].append(obj)
             else:
-                key = None
-            factors_by_index[key].append(obj)
-        return Mult(Summation(*[Mult(*l) for l in factors_by_index.values()]), *factors_by_index[None])
+                nontensors.append(obj)
+        return Mult(Summation(*[Mult(*l) for l in tensors_by_index.values()]), *nontensors)
     
 def stripfactor(x):
     if isinstance(x, Mult) and x._list and isnum(x._list[0]):
@@ -451,8 +465,16 @@ def getfactor(x):
         return 1
 
 class Sum(Reductor):
+    
     def __repr__(self, sep=''):
         return f' + {sep}'.join('(' + x.__repr__() + ')' if isinstance(x, Sum) else x.__repr__() for x in self._list)
+    
+    @property
+    def p(self):
+        """
+        Quick printer with newlines between terms
+        """
+        print(self.__repr__('\n'))
         
     def reduce(self):
         numbers = []
@@ -604,9 +626,16 @@ def gen_corr(*vars, what='full'):
     
     # assume diagonal hessian
     elif what == 'diag':
-        e = e.recursive('assume_diagonal') # replace off diagonal D with 0
-        e = e.recursive('reduce') # remove 0 terms from the sum
-        
+        e = e.recursive('assume_diagonal').recursive('reduce')
+
+        e = e.recursive('separate_V').recursive('concat').recursive('reduce')
+
+        e = e.recursive('as_summation').recursive('reduce')
+
+        e = e.recursive('explode').recursive('expand').recursive('concat').recursive('reduce')
+
+        e = e.recursive('sort').recursive('index_summation').recursive('harvest')
+           
         return e
         
     else:
