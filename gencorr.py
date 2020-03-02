@@ -607,6 +607,7 @@ class Corr:
         """
         *vars = list of arbitrary labels for the functions
         """
+        assert 1 <= len(vars) <= 4
         self._vars = vars
         self._expr = None
     
@@ -657,6 +658,9 @@ class Corr:
         """
         Return simplified formula assuming hessians are diagonal.
         """
+        if len(self._vars) == 1:
+            return Sum(Summation(D(2, self._vars[0])))
+        
         e = copy.deepcopy(self.corr())
         
         # remove off-diagonal hessians
@@ -800,6 +804,7 @@ if __name__ == '__main__':
             m[n] = np.sum(special.binom(n, np.arange(n + 1)) * m1[:n + 1] * m2[n::-1])
         return m
     
+    c1 = Corr('')
     c2 = Corr('','')
     c3 = Corr('','','')
     c4 = Corr('','','','')
@@ -813,64 +818,77 @@ if __name__ == '__main__':
     c4aabc = Corr('a','a','b','c')
     c4aaab = Corr('a','a','a','b')
     
-    class TestDiagCode(unittest.TestCase):
+    class TestDiagDirect(unittest.TestCase):
         
         def setUp(self):
             n = np.random.randint(5, 15)
             self.V = moments[np.random.randint(len(moments), size=n)].T
-            self.G = np.random.randn(4, n)
-            self.H = np.random.randn(4, n)
-            self.ddc = direct_diag_comp(self.V, self.G[0], self.H[0])
+            self.G = np.random.randn(n)
+            self.H = np.random.randn(n)
+            self.ddc = direct_diag_comp(self.V, self.G, self.H)
+        
+        def testc1(self):
+            exec(c1.diagcode(), globals())
+            c = corrdiag1(self.V, self.G, self.H)
+            self.assertTrue(np.allclose(c, self.ddc[1]))
         
         def testc2(self):
             exec(c2.diagcode(), globals())
-            c = corrdiag2(self.V, self.G[0], self.H[0])
+            c = corrdiag2(self.V, self.G, self.H)
             self.assertTrue(np.allclose(c, self.ddc[2]))
 
         def testc3(self):
             exec(c3.diagcode(), globals())
-            c = corrdiag3(self.V, self.G[0], self.H[0])
+            c = corrdiag3(self.V, self.G, self.H)
             self.assertTrue(np.allclose(c, self.ddc[3]))
         
         def testc4(self):
             exec(c4.diagcode(), globals())
-            c = corrdiag4(self.V, self.G[0], self.H[0])
+            c = corrdiag4(self.V, self.G, self.H)
             self.assertTrue(np.allclose(c, self.ddc[4]))
         
         def testc2ab(self):
             exec(c2ab.diagcode(), globals())
-            c = corrdiag2ab(self.V, self.G[0], self.H[0], self.G[0], self.H[0])
+            c = corrdiag2ab(self.V, self.G, self.H, self.G, self.H)
             self.assertTrue(np.allclose(c, self.ddc[2]))
         
         def testc3abc(self):
             exec(c3abc.diagcode(), globals())
-            c = corrdiag3abc(self.V, self.G[0], self.H[0], self.G[0], self.H[0], self.G[0], self.H[0])
+            c = corrdiag3abc(self.V, self.G, self.H, self.G, self.H, self.G, self.H)
             self.assertTrue(np.allclose(c, self.ddc[3]))
         
         def testc4abcd(self):
             exec(c4abcd.diagcode(), globals())
-            c = corrdiag4abcd(self.V, self.G[0], self.H[0], self.G[0], self.H[0], self.G[0], self.H[0], self.G[0], self.H[0])
+            c = corrdiag4abcd(self.V, self.G, self.H, self.G, self.H, self.G, self.H, self.G, self.H)
             self.assertTrue(np.allclose(c, self.ddc[4]))
     
         def testc3aab(self):
             exec(c3aab.diagcode(), globals())
-            c = corrdiag3aab(self.V, self.G[0], self.H[0], self.G[0], self.H[0])
+            c = corrdiag3aab(self.V, self.G, self.H, self.G, self.H)
             self.assertTrue(np.allclose(c, self.ddc[3]))
         
         def testc4aabb(self):
             exec(c4aabb.diagcode(), globals())
-            c = corrdiag4aabb(self.V, self.G[0], self.H[0], self.G[0], self.H[0])
+            c = corrdiag4aabb(self.V, self.G, self.H, self.G, self.H)
             self.assertTrue(np.allclose(c, self.ddc[4]))
         
         def testc4aabc(self):
             exec(c4aabc.diagcode(), globals())
-            c = corrdiag4aabc(self.V, self.G[0], self.H[0], self.G[0], self.H[0], self.G[0], self.H[0])
+            c = corrdiag4aabc(self.V, self.G, self.H, self.G, self.H, self.G, self.H)
             self.assertTrue(np.allclose(c, self.ddc[4]))
 
         def testc4aaab(self):
             exec(c4aaab.diagcode(), globals())
-            c = corrdiag4aaab(self.V, self.G[0], self.H[0], self.G[0], self.H[0])
+            c = corrdiag4aaab(self.V, self.G, self.H, self.G, self.H)
             self.assertTrue(np.allclose(c, self.ddc[4]))
+        
+    class TestDiagAutoDegeneracy(unittest.TestCase):
+        
+        def setUp(self):
+            n = np.random.randint(5, 15)
+            self.V = moments[np.random.randint(len(moments), size=n)].T
+            self.G = np.random.randn(3, n)
+            self.H = np.random.randn(3, n)
         
         def testc3abc_c3aab(self):
             exec(c3abc.diagcode(), globals())
@@ -900,4 +918,78 @@ if __name__ == '__main__':
             c2 = corrdiag4aabc(self.V, self.G[0], self.H[0], self.G[1], self.H[1], self.G[2], self.H[2])
             self.assertTrue(np.allclose(c1, c2))
 
+    class TestDiagCrossDegeneracy(unittest.TestCase):
+        
+        def setUp(self):
+            m = 4
+            n = 5
+            self.V = moments[np.random.randint(len(moments), size=m * n)].T
+            self.GH = np.zeros((2, m, m, n))
+            for i in range(m):
+                self.GH[:, i, i] = np.random.randn(2, n)
+            self.GH = self.GH.reshape(2, m, m * n)
+        
+        def testc2ab_c1_c1(self):
+            exec(c2ab.diagcode(), globals())
+            exec(c1.diagcode(), globals())
+            co1 = corrdiag2ab(self.V, *self.GH[:, 0], *self.GH[:, 1])
+            co2a = corrdiag1(self.V, *self.GH[:, 0])
+            co2b = corrdiag1(self.V, *self.GH[:, 1])
+            self.assertTrue(np.allclose(co1, co2a * co2b))
+        
+        def testc3abc_c1_c1_c1(self):
+            exec(c3abc.diagcode(), globals())
+            exec(c1.diagcode(), globals())
+            co1 = corrdiag3abc(self.V, *self.GH[:, 0], *self.GH[:, 1], *self.GH[:, 2])
+            co2a = corrdiag1(self.V, *self.GH[:, 0])
+            co2b = corrdiag1(self.V, *self.GH[:, 1])
+            co2c = corrdiag1(self.V, *self.GH[:, 2])
+            self.assertTrue(np.allclose(co1, co2a * co2b * co2c))
+        
+        def testc3aab_c2_c1(self):
+            exec(c3aab.diagcode(), globals())
+            exec(c2.diagcode(), globals())
+            exec(c1.diagcode(), globals())
+            co1 = corrdiag3aab(self.V, *self.GH[:, 0], *self.GH[:, 1])
+            co2a = corrdiag2(self.V, *self.GH[:, 0])
+            co2b = corrdiag1(self.V, *self.GH[:, 1])
+            self.assertTrue(np.allclose(co1, co2a * co2b))
+        
+        def testc4abcd_c1_c1_c1_c1(self):
+            exec(c4abcd.diagcode(), globals())
+            exec(c1.diagcode(), globals())
+            co1 = corrdiag4abcd(self.V, *self.GH[:, 0], *self.GH[:, 1], *self.GH[:, 2], *self.GH[:, 3])
+            co2a = corrdiag1(self.V, *self.GH[:, 0])
+            co2b = corrdiag1(self.V, *self.GH[:, 1])
+            co2c = corrdiag1(self.V, *self.GH[:, 2])
+            co2d = corrdiag1(self.V, *self.GH[:, 3])
+            self.assertTrue(np.allclose(co1, co2a * co2b * co2c * co2d))
+        
+        def testc4aabc_c2_c1_c1(self):
+            exec(c4aabc.diagcode(), globals())
+            exec(c2.diagcode(), globals())
+            exec(c1.diagcode(), globals())
+            co1 = corrdiag4aabc(self.V, *self.GH[:, 0], *self.GH[:, 1], *self.GH[:, 2])
+            co2a = corrdiag2(self.V, *self.GH[:, 0])
+            co2b = corrdiag1(self.V, *self.GH[:, 1])
+            co2c = corrdiag1(self.V, *self.GH[:, 2])
+            self.assertTrue(np.allclose(co1, co2a * co2b * co2c))
+        
+        def testc4aabb_c2_c2(self):
+            exec(c4aabb.diagcode(), globals())
+            exec(c2.diagcode(), globals())
+            co1 = corrdiag4aabb(self.V, *self.GH[:, 0], *self.GH[:, 1])
+            co2a = corrdiag2(self.V, *self.GH[:, 0])
+            co2b = corrdiag2(self.V, *self.GH[:, 1])
+            self.assertTrue(np.allclose(co1, co2a * co2b))
+        
+        def testc4aaab_c3_c1(self):
+            exec(c4aaab.diagcode(), globals())
+            exec(c3.diagcode(), globals())
+            exec(c1.diagcode(), globals())
+            co1 = corrdiag4aaab(self.V, *self.GH[:, 0], *self.GH[:, 1])
+            co2a = corrdiag3(self.V, *self.GH[:, 0])
+            co2b = corrdiag1(self.V, *self.GH[:, 1])
+            self.assertTrue(np.allclose(co1, co2a * co2b))
+        
     unittest.main()
