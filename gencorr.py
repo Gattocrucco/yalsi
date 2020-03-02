@@ -804,6 +804,15 @@ if __name__ == '__main__':
     c3 = Corr('','','')
     c4 = Corr('','','','')
     
+    c2ab = Corr('a','b')
+    c3abc = Corr('a','b','c')
+    c4abcd = Corr('a','b','c','d')
+    
+    c3aab = Corr('a','a','b')
+    c4aabb = Corr('a','a','b','b')
+    c4aabc = Corr('a','a','b','c')
+    c4aaab = Corr('a','a','a','b')
+    
     class TestDiagCode(unittest.TestCase):
         
         def setUp(self):
@@ -817,7 +826,7 @@ if __name__ == '__main__':
             exec(c2.diagcode(), globals())
             c = corrdiag2(self.V, self.G[0], self.H[0])
             self.assertTrue(np.allclose(c, self.ddc[2]))
-        
+
         def testc3(self):
             exec(c3.diagcode(), globals())
             c = corrdiag3(self.V, self.G[0], self.H[0])
@@ -828,4 +837,67 @@ if __name__ == '__main__':
             c = corrdiag4(self.V, self.G[0], self.H[0])
             self.assertTrue(np.allclose(c, self.ddc[4]))
         
+        def testc2ab(self):
+            exec(c2ab.diagcode(), globals())
+            c = corrdiag2ab(self.V, self.G[0], self.H[0], self.G[0], self.H[0])
+            self.assertTrue(np.allclose(c, self.ddc[2]))
+        
+        def testc3abc(self):
+            exec(c3abc.diagcode(), globals())
+            c = corrdiag3abc(self.V, self.G[0], self.H[0], self.G[0], self.H[0], self.G[0], self.H[0])
+            self.assertTrue(np.allclose(c, self.ddc[3]))
+        
+        def testc4abcd(self):
+            exec(c4abcd.diagcode(), globals())
+            c = corrdiag4abcd(self.V, self.G[0], self.H[0], self.G[0], self.H[0], self.G[0], self.H[0], self.G[0], self.H[0])
+            self.assertTrue(np.allclose(c, self.ddc[4]))
+    
+        def testc3aab(self):
+            exec(c3aab.diagcode(), globals())
+            c = corrdiag3aab(self.V, self.G[0], self.H[0], self.G[0], self.H[0])
+            self.assertTrue(np.allclose(c, self.ddc[3]))
+        
+        def testc4aabb(self):
+            exec(c4aabb.diagcode(), globals())
+            c = corrdiag4aabb(self.V, self.G[0], self.H[0], self.G[0], self.H[0])
+            self.assertTrue(np.allclose(c, self.ddc[4]))
+        
+        def testc4aabc(self):
+            exec(c4aabc.diagcode(), globals())
+            c = corrdiag4aabc(self.V, self.G[0], self.H[0], self.G[0], self.H[0], self.G[0], self.H[0])
+            self.assertTrue(np.allclose(c, self.ddc[4]))
+
+        def testc4aaab(self):
+            exec(c4aaab.diagcode(), globals())
+            c = corrdiag4aaab(self.V, self.G[0], self.H[0], self.G[0], self.H[0])
+            self.assertTrue(np.allclose(c, self.ddc[4]))
+        
+        def testc3abc_c3aab(self):
+            exec(c3abc.diagcode(), globals())
+            exec(c3aab.diagcode(), globals())
+            c1 = corrdiag3abc(self.V, self.G[0], self.H[0], self.G[0], self.H[0], self.G[1], self.H[1])
+            c2 = corrdiag3aab(self.V, self.G[0], self.H[0], self.G[1], self.H[1])
+            self.assertTrue(np.allclose(c1, c2))
+
+        def testc4abcd_c4aaab(self):
+            exec(c4abcd.diagcode(), globals())
+            exec(c4aaab.diagcode(), globals())
+            c1 = corrdiag4abcd(self.V, self.G[0], self.H[0], self.G[0], self.H[0], self.G[0], self.H[0], self.G[1], self.H[1])
+            c2 = corrdiag4aaab(self.V, self.G[0], self.H[0], self.G[1], self.H[1])
+            self.assertTrue(np.allclose(c1, c2))
+
+        def testc4abcd_c4aabb(self):
+            exec(c4abcd.diagcode(), globals())
+            exec(c4aabb.diagcode(), globals())
+            c1 = corrdiag4abcd(self.V, self.G[0], self.H[0], self.G[0], self.H[0], self.G[1], self.H[1], self.G[1], self.H[1])
+            c2 = corrdiag4aabb(self.V, self.G[0], self.H[0], self.G[1], self.H[1])
+            self.assertTrue(np.allclose(c1, c2))
+
+        def testc4abcd_c4aabc(self):
+            exec(c4abcd.diagcode(), globals())
+            exec(c4aabc.diagcode(), globals())
+            c1 = corrdiag4abcd(self.V, self.G[0], self.H[0], self.G[0], self.H[0], self.G[1], self.H[1], self.G[2], self.H[2])
+            c2 = corrdiag4aabc(self.V, self.G[0], self.H[0], self.G[1], self.H[1], self.G[2], self.H[2])
+            self.assertTrue(np.allclose(c1, c2))
+
     unittest.main()
