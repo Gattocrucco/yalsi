@@ -9,9 +9,9 @@ import itertools
 __doc__ = """
 Usage examples:
 >>> import gencorr
->>> print(gencorr.gen_corr('','').__repr__('\n')) # second order variance
->>> print(gencorr.gen_corr('a','b').__repr__('\n')) # s.o. covariance
->>> print(gencorr.gen_corr('','','','').__repr__('\n')) # s.o. 4th moment
+>>> gencorr.Corr('','').corr().p # second order variance
+>>> gencorr.Corr('a','b').corr().p # s.o. covariance
+>>> gencorr.Corr('','','','').corr().p # s.o. 4th moment
 The output from first line (variance) is:
     G_i G_i V_ii + 
     2 G_i H_ii V_iii + 
@@ -348,35 +348,30 @@ class Mult(Reductor):
                 return Sum(*terms)
         return self
     
-    def index_D(self):
+    def index_D_from_V(self):
         """
-        If there is a V object, take its indices and distribute them in order
-        over D objects.
+        Take indices from V objects, in order, and give them to D objects, in
+        order.
+        """
+        indices = ()
+        for obj in self._list:
+            if isinstance(obj, V):
+                indices += obj._indices
         
-        (Maybe change name to index_D_from_V, and collect all V objects
-        instead of the first one in the multiplication)
-        """
-        for Vobj in self._list:
-            if isinstance(Vobj, V):
-                break
-        else:
-            return self
-        Dobjs = []
+        i = 0
         for obj in self._list:
             if isinstance(obj, D):
-                Dobjs.append(obj)
-        i = 0
-        for d in Dobjs:
-            d._indices = Vobj._indices[i:i + d._rank]
-            i += d._rank
-        assert(i == Vobj._rank)
+                obj._indices = indices[i:i + obj._rank]
+                i += obj._rank
+        assert i == len(indices)
+        
         return self
     
     def split_D(self):
         """
         Replace D objects with a sum over all permutations of indices of the
         D objects. Makes sense because the V object represents a symmetric
-        tensor.
+        tensor. NOOOOO! After pruning they are not totally symmetric!
         
         Currently not used anywhere.
         """
@@ -616,7 +611,7 @@ class Corr:
         Return the full correlation formula.
         """
         if self._expr:
-            return self._expr
+            return copy.deepcopy(self._expr)
         
         e = Mult(*[Sum(D(1, v), D(2, v)) for v in self._vars])
     
@@ -637,7 +632,7 @@ class Corr:
         e = e.recursive('concat')
     
         # put indices on D tensors
-        e = e.recursive('index_D')
+        e = e.recursive('index_D_from_V')
         e = e.recursive('sort_indices')
         e = e.recursive('sort')
         e = e.recursive('harvest')
@@ -652,7 +647,7 @@ class Corr:
         e = e.recursive('concat')
 
         self._expr = e
-        return self._expr
+        return copy.deepcopy(self._expr)
 
     def diag(self):
         """
@@ -661,7 +656,7 @@ class Corr:
         if len(self._vars) == 1:
             return Sum(Summation(D(2, self._vars[0])))
         
-        e = copy.deepcopy(self.corr())
+        e = self.corr()
         
         # remove off-diagonal hessians
         e = e.recursive('assume_diagonal').recursive('reduce')
