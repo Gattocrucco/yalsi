@@ -57,19 +57,14 @@ class Tensor(Expression):
         rank = number of indices
         indices = tuple of integers. can be empty, can have repetitions
         """
+        assert isinstance(rank, int) and rank >= 0
         self._rank = rank
         self._indices = tuple(indices)
         assert not self._indices or len(self._indices) == self._rank
+        assert all(isinstance(x, int) and 0 <= x < 8 for x in self._indices)
     
     def sort_indices(self):
         self._indices = tuple(sorted(self._indices))
-        return self
-    
-    def apply_index(self, idx):
-        """
-        Replace all indices with idx.
-        """
-        self._indices = (idx,) * len(self._indices)
         return self
     
     def clear_indices(self):
@@ -111,12 +106,6 @@ class V(Tensor):
     
     def __repr__(self):
         return super().__repr__('V')
-    
-    def __lt__(self, d):
-        if isinstance(d, D):
-            return False
-        else:
-            return super().__lt__(d)
     
     def index_V(self):
         """
@@ -202,6 +191,7 @@ class D(Tensor):
         indices = tuple of indices for the tensor, default empty
         """
         super().__init__(rank, indices)
+        assert self._rank <= 2
         self._var = var
     
     def __repr__(self):
@@ -221,8 +211,6 @@ class D(Tensor):
     def __lt__(self, d):
         if isinstance(d, D):
             return self._var < d._var or self._var == d._var and super().__lt__(d)
-        elif isinstance(d, V):
-            return True
         else:
             return super().__lt__(d)
     
@@ -244,7 +232,73 @@ class D(Tensor):
     def gather_vars(self, vars):
         vars.add(self._var)
         return self
+    
+    def as_J(self, index=None):
+        """
+        Decompose into J tensors with specified summation index.
+        """
+        assert self._rank == 2
+        bracket = (index,) if index else ()
+        a = J(0, self._var, (),                bracket)
+        b = J(1, self._var, self._indices[:1], bracket)
+        c = J(1, self._var, self._indices[1:], bracket)
+        return Mult(a, b, c)
 
+class J(D):
+    """
+    Represent a part of the decomposition of a D tensor. Example with D(2):
+    
+    Hij = J[k]i D[k] J[k]j
+    
+    The "bracket" index is separated from the normal index and is not
+    considered an index of the tensor.
+    """
+    
+    def __init__(self, rank, var, indices=(), bracket=()):
+        """
+        rank
+        var = like D's var
+        indices = normal tensor indices (as much as rank)
+        bracket = "internal" summed over indices, must be negative
+        """
+        super().__init__(rank, var, indices)
+        assert self._rank <= 1
+        self._bracket = tuple(bracket)
+        assert all(isinstance(x, int) and x < 0 for x in self._bracket)
+    
+    def __repr__(self):
+        letter = {0: 'D', 1: 'J'}[self._rank]
+        
+        if str(self._var) == '':
+            varstr = ''
+        elif self._indices and not self._bracket:
+            varstr = f'{self._var}_'
+        else:
+            varstr = f'{self._var}'
+        
+        brastr = ''.join(indices[i] for i in self._bracket)
+        if brastr:
+            brastr = f'[{brastr}]'
+        
+        indstr = ''.join(indices[i] for i in self._indices)
+        
+        return f'{letter}{varstr}{brastr}{indstr}'
+    
+    def __lt__(self, d):
+        if isinstance(d, J):
+            return self._var < d._var or self._var == d._var and self._bracket < d._bracket or self._bracket == d._bracket and super().__lt__(d)
+        else:
+            return super().__lt__(d)
+    
+    def __eq__(self, obj):
+        return super().__eq__(obj) and self._bracket == obj._bracket
+    
+    def varname(self):
+        return {0: 'd', 1: 'j'}[self._rank] + str(self._var)
+    
+    def python(self):
+        return {0: 'D', 1: 'J'}[self._rank] + str(self._var)
+    
 class Reductor(Expression):
     """
     Represent an associative operation.
@@ -455,17 +509,28 @@ class Mult(Reductor):
         """
         If indices are separated by tensor, transform to a Summation object.
         """
-        if any(map(lambda x: isinstance(x, Tensor) and len(set(x._indices)) != 1, self._list)):
+        if any(isinstance(x, Tensor) and len(set(x._indices)) > 1 for x in self._list):
             return self
         
         tensors_by_index = defaultdict(list)
-        nontensors = []
+        nonindexed = []
         for obj in self._list:
-            if isinstance(obj, Tensor):
+            if isinstance(obj, Tensor) and obj._rank >= 1:
                 tensors_by_index[obj._indices[0]].append(obj)
             else:
-                nontensors.append(obj)
-        return Mult(Summation(*[Mult(*l) for l in tensors_by_index.values()]), *nontensors)
+                nonindexed.append(obj)
+        return Mult(Summation(*[Mult(*l) for l in tensors_by_index.values()]), *nonindexed)
+    
+    def decompose_hessians(self):
+        """
+        Decompose D(2) tensors.
+        """
+        idx = -1
+        for i, obj in enumerate(self._list):
+            if isinstance(obj, D) and obj._rank == 2:
+                self._list[i] = obj.as_J(idx)
+                idx -= 1
+        return self
     
     def varname(self):
         return ''.join(map(lambda x: x.varname(), self._list))
