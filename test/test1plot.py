@@ -1,5 +1,5 @@
-# file fit-plot.py
-# you can run this script while fit.py is running to see the partial results
+# file test1plot.py
+# you can run this script while test1.py is running to see the partial results
 
 from matplotlib import pyplot as plt
 import uncertainties

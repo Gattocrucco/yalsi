@@ -293,11 +293,20 @@ class J(D):
     def __eq__(self, obj):
         return super().__eq__(obj) and self._bracket == obj._bracket
     
-    def varname(self):
-        return {0: 'd', 1: 'j'}[self._rank] + str(self._var)
+    def gather_brackets(self, bag):
+        """
+        bag = a list
+        """
+        bag += list(self._bracket)
+        return self
     
-    def python(self):
-        return {0: 'D', 1: 'J'}[self._rank] + str(self._var)
+    def replace_brackets(self, mapping):
+        """
+        mapping = a dictionary old index -> new index
+        """
+        self._bracket = tuple(mapping[i] for i in self._bracket)
+        assert all(isinstance(i, int) and i < 0 for i in self._bracket)
+        return self
     
 class Reductor(Expression):
     """
@@ -740,6 +749,29 @@ class Corr:
        
         return e
 
+    def lowrank(self):
+        """
+        Return formula with decomposed hessians.
+        """
+        e = self.corr()
+        
+        # decompose hessians
+        e = e.recursive('decompose_hessians').recursive('concat')
+
+        # separate moments by variable, e.g. Viiijj = Viii Vjj = Viii 1
+        e = e.recursive('separate_V').recursive('concat').recursive('reduce')
+
+        # turn implicit summations into Summation objects
+        e = e.recursive('as_summation').recursive('index_summation').recursive('reduce')
+
+        # convert from summations over non overlapping indices to full range
+        e = e.recursive('explode').recursive('expand').recursive('concat').recursive('reduce')
+
+        # final simplification
+        e = e.recursive('sort').recursive('harvest')
+       
+        return e
+
     def diagcode(self):
         """
         Return code for a function computing the formula given by diag().
@@ -762,7 +794,33 @@ class Corr:
         corr_code = ''.join(f'    c += {m.python()}\n' for m in expr._list)
     
         return fhead + terms_code + '\n    c = 0\n' + corr_code + '\n    return c\n'
-
+    
+    def lowrankcode(self):
+        """
+        Return code for a function computing the formula given by diag().
+        """    
+        # collect all summation terms from the expression
+        expr = self.lowrank()
+        terms = []
+        expr.recursive('gather_summation_terms', terms)
+    
+        # copy terms and remove duplicates
+        terms = [copy.deepcopy(term) for term, _ in itertools.groupby(sorted(terms))]
+        
+        # canonicalize bracket indices
+        pass
+    
+        # write function head
+        fname = f'corrlowrank{len(self._vars)}' + ''.join(sorted(map(str, self._vars)))
+        fparams = ', '.join(f'G{v}, D{v}, J{v}' for v in sorted(set(map(str, self._vars))))
+        fhead = f'def {fname}(V, {fparams}):\n'
+    
+        # # write code
+        # terms_code = ''.join(f'    {t.varname()} = np.sum({t.python()})\n' for t in terms)
+        # corr_code = ''.join(f'    c += {m.python()}\n' for m in expr._list)
+        #
+        # return fhead + terms_code + '\n    c = 0\n' + corr_code + '\n    return c\n'
+    
 if __name__ == '__main__':
     import unittest
     from scipy import special

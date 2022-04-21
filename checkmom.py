@@ -53,6 +53,7 @@ def checkmom(moments, threshold=0):
     hankel = moments[..., indices]
     eigvals = np.linalg.eigvalsh(hankel)
     cond = np.min(eigvals, axis=-1) / np.max(eigvals, axis=-1)
+    # TODO handle the case max(eigvals) < 0
     
     return cond >= threshold
 

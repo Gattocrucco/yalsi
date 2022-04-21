@@ -1,6 +1,6 @@
 import numpy as np
 
-def numdiff(f, x, step=None):
+def numdiff(f, x, estjac=None, esthess=None):
     """
     Compute jacobian and hessian with second order finite central differences.
     
@@ -8,64 +8,77 @@ def numdiff(f, x, step=None):
     ----------
     f : function R^n -> R^m 
     x : array (n,)
-    step : float or None
-        If None, a default value is used which is reasonable if the function
-        and its derivatives are O(1) and all the digits in the result are
-        accurate.
     
     Return
     ------
     jacobian : array (m, n)
     hessian : array (m, n, n)
     """
+    # TODO:
+    # broadcast (scalars too)
+    
     x = np.asarray_chkfinite(x)
     assert len(x.shape) == 1
+    assert np.issubdtype(x.dtype, np.floating)
     
-    if step is None:
-        step = np.finfo(x.dtype).eps ** (1/4)
-    else:
-        assert np.isfinite(step)
-        assert step > 0
-        
+    eps = np.finfo(x.dtype).eps
+    
     fcc = f(x)
     
     jac = np.empty((len(fcc), len(x)))
     hess = np.empty((len(fcc), len(x), len(x)))
     
-    fcc2 = 2 * fcc
-    step2 = 2 * step
-    stepsq = step ** 2
-    stepsq2 = 2 * stepsq
-    
+    if not (estjac is None):
+        estjac = np.ones(jac.shape) * estjac # TODO use broadcast_to
+        assert np.all(np.isfinite(estjac))
+    if not (esthess is None):
+        esthess = np.ones(hess.shape) * esthess
+        assert np.all(np.isfinite(esthess))
+        
     a = np.array(x)
-    for i in range(len(x)):
-        a[i] = x[i] + step
-        frc = f(a)
-        a[i] = x[i] - step
-        flc = f(a)
-        a[i] = x[i]
+    for k in range(len(fcc)):
         
-        jac[:, i] = (frc - flc) / step2
+        for i in range(len(x)):
+            sj = (eps * (1 if estjac is None else np.abs(fcc[k] / estjac[k, i]))) ** (1/3)
         
-        frclc = frc + flc
-        hess[:, i, i] = (frclc - fcc2) / stepsq
-        
-        for j in range(i + 1, len(x)):
-            a[i] = x[i] + step
-            a[j] = x[j] + step
-            frr = f(a)
+            a[i] = x[i] + sj
+            fr = f(a)[k]
+            a[i] = x[i] - sj
+            fl = f(a)[k]
             a[i] = x[i]
-            fcr = f(a)
-            a[j] = x[j] - step
-            fcl = f(a)
-            a[i] = x[i] - step
-            fll = f(a)
+        
+            jac[k, i] = (fr - fl) / (2 * sj)
+        
+            sh = (eps * (1 if esthess is None else np.abs(fcc[k] / esthess[k, i, i]))) ** (1/4)
+        
+            a[i] = x[i] + sh
+            fr = f(a)[k]
+            a[i] = x[i] - sh
+            fl = f(a)[k]
             a[i] = x[i]
-            a[j] = x[j]
+            hess[k, i, i] = (fr + fl - 2 * fcc[k]) / sh ** 2
+        
+            for j in range(i + 1, len(x)):
+                sh = (eps * (1 if esthess is None else np.abs(fcc[k] / esthess[k, i, j]))) ** (1/4)
             
-            fcrcl = fcr + fcl
-            hess[:, i, j] = (frr + fll - frclc - fcrcl + fcc2) / stepsq2
-            hess[:, j, i] = hess[:, i, j]
+                a[i] = x[i] + sh
+                frc = f(a)[k]
+                a[j] = x[j] + sh
+                frr = f(a)[k]
+                a[i] = x[i]
+                fcr = f(a)[k]
+                a[j] = x[j] - sh
+                fcl = f(a)[k]
+                a[i] = x[i] - sh
+                fll = f(a)[k]
+                a[j] = x[j]
+                flc = f(a)[k]
+                a[i] = x[i]
+            
+                frclc = frc + flc
+                fcrcl = fcr + fcl
+                hess[k, i, j] = (frr + fll - frclc - fcrcl + 2 * fcc[k]) / (2 * sh ** 2)
+                hess[k, j, i] = hess[k, i, j]
     
     return jac, hess
 
@@ -73,6 +86,27 @@ if __name__ == '__main__':
     from autograd import numpy as np
     import autograd
     import unittest
+    from matplotlib import pyplot as plt
+    
+    f = lambda x: 2 + np.sin(x) - np.cos(x)
+    steps = np.logspace(-15, 0, 100)
+    result = np.empty((2, len(steps)))
+    for i in range(len(steps)):
+        s = steps[i]
+        result[0, i] = (f(s) - f(-s)) / (2 * s)
+        result[1, i] = (f(s) + f(-s) - 2 * f(0)) / s ** 2
+    
+    fig = plt.figure('numdiff')
+    fig.clf()
+    axs = fig.subplots(2, 1)
+    for i, ax in enumerate(axs):
+        ax.plot(steps, np.abs(result[i] - 1))
+        ax.set_xscale('log')
+        ax.set_yscale('log')
+        ax.axvline(np.finfo(float).eps ** (1/(3 + i)))
+        ax.set_title(f'derivative {i + 1}')
+    fig.tight_layout()
+    fig.show()
     
     class TestNumdiff(unittest.TestCase):
         

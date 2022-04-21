@@ -39,6 +39,16 @@ def stdmom(moments, compact_output=False, inplace=False):
         The variance, i.e. `moments[..., 2]` if `moments[..., 1] == 0` and
         `moments[..., 0] == 1`.
     """
+    # TODO:
+    #
+    # Add parameters norm=1, mean=0, var=1 to change
+    # normalizations. None to not normalize. Example: norm=1, mean=0, var=None
+    # centers the moments without standardizing. norm=1, mean=None, var=1
+    # rescales the moments so that m[2] - m[1]^2 = 1.
+    #
+    # Is there some trick to make the computation less than O(n^2)? Although
+    # I don't expect n to be large in typical cases.
+    
     # Check input
     assert not np.isscalar(moments)
     original_moments = moments
